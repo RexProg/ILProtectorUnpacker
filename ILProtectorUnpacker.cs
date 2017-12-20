@@ -59,7 +59,7 @@ class Script
             assembly = Assembly.LoadFrom(path);
             Console.WriteLine("[+] Wait...");
 
-            Memory.Hook(typeof(StackTrace).GetMethod("GetFrame", BindingFlags.Instance | BindingFlags.Public), typeof(Script).GetMethod("Hook", BindingFlags.Instance | BindingFlags.Public));
+            Memory.Hook(typeof(StackFrame).GetMethod("SetMethodBase", BindingFlags.Instance | BindingFlags.NonPublic), typeof(Script).GetMethod("Hook2", BindingFlags.Instance | BindingFlags.Public));
 
             var types = assemblyWriter.moduleDef.GetTypes();
             var list = (types as IList<TypeDef>) ?? types.ToList<TypeDef>();
@@ -85,13 +85,13 @@ class Script
 
             InvokeDelegates(list, method, fieldValue);
 
-            StringDecrypter stringDecrypter = new StringDecrypter(assembly);
-            stringDecrypter.ReplaceStrings(list);
+            new StringDecrypter(assembly).ReplaceStrings(list);
 
             foreach (var typeDef in junkType)
             {
                 typeDef.DeclaringType.NestedTypes.Remove(typeDef);
             }
+
             MethodDef methodDef = globalType.FindStaticConstructor();
 
             if (methodDef.HasBody)
@@ -180,6 +180,14 @@ class Script
             }
         }
         return null;
+    }
+
+    public void Hook2(MethodBase mb)
+    {
+        if (mb.Name == "InvokeMethod")
+            typeof(StackFrame).GetField("method", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(this, assembly.Modules.FirstOrDefault<Module>().ResolveMethod(currentMethod.MDToken.ToInt32()));
+        else
+            typeof(StackFrame).GetField("method", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(this, mb);
     }
 }
 
