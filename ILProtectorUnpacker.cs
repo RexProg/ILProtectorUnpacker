@@ -19,6 +19,7 @@ class Script
     public static AssemblyWriter assemblyWriter;
     public static Assembly assembly;
     public static MethodDef currentMethod;
+    public static StackFrame[] mainFrames;
     public static List<TypeDef> junkType = new List<TypeDef>();
 
     [STAThread]
@@ -59,7 +60,9 @@ class Script
             assembly = Assembly.LoadFrom(path);
             Console.WriteLine("[+] Wait...");
 
-            Memory.Hook(typeof(StackFrame).GetMethod("SetMethodBase", BindingFlags.Instance | BindingFlags.NonPublic), typeof(Script).GetMethod("Hook2", BindingFlags.Instance | BindingFlags.Public));
+            mainFrames = new StackTrace().GetFrames();
+
+            Memory.Hook(typeof(StackTrace).GetMethod("CaptureStackTrace", BindingFlags.Instance | BindingFlags.NonPublic), typeof(Script).GetMethod("Hook3", BindingFlags.Instance | BindingFlags.Public));
 
             var types = assemblyWriter.moduleDef.GetTypes();
             var list = (types as IList<TypeDef>) ?? types.ToList<TypeDef>();
@@ -82,7 +85,6 @@ class Script
 
             if (method == null)
                 Console.WriteLine("[!] Couldn't find InvokeMethod");
-
             InvokeDelegates(list, method, fieldValue);
 
             new StringDecrypter(assembly).ReplaceStrings(list);
@@ -188,6 +190,29 @@ class Script
             typeof(StackFrame).GetField("method", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(this, assembly.Modules.FirstOrDefault<Module>().ResolveMethod(currentMethod.MDToken.ToInt32()));
         else
             typeof(StackFrame).GetField("method", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(this, mb);
+    }
+
+    public void Hook3(int iSkip, bool fNeedFileInfo, Thread targetThread, Exception e)
+    {
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+        //    FrameCount    |                2	                 |               int                 //
+        //  METHODS_TO_SKIP |                0	                 |               int                 //
+        //      frames      | {System.Diagnostics.StackFrame[6]} |  System.Diagnostics.StackFrame[]  //
+        // m_iMethodsToSkip	|                4	                 |               int                 //
+        //  m_iNumOfFrames  |                2	                 |               int                 //
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+        typeof(StackFrame).GetField("method", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(mainFrames.Last(), assembly.Modules.FirstOrDefault<Module>().ResolveMethod(currentMethod.MDToken.ToInt32()));
+
+        var mainFramesList = mainFrames.ToList();
+
+        for (int i = mainFramesList.Count(); i < 6; i++)
+            mainFramesList.Add(mainFrames.Last());
+        for (int i = mainFramesList.Count(); i > 6; i--)
+            mainFramesList.Remove(mainFramesList.First());
+
+        typeof(StackTrace).GetField("frames", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(this, mainFramesList.ToArray());
+        typeof(StackTrace).GetField("m_iMethodsToSkip", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(this, 4);
+        typeof(StackTrace).GetField("m_iNumOfFrames", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(this, 2);
     }
 }
 
