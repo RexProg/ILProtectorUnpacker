@@ -85,6 +85,7 @@ class Script
 
             if (method == null)
                 Console.WriteLine("[!] Couldn't find InvokeMethod");
+
             InvokeDelegates(list, method, fieldValue);
 
             new StringDecrypter(assembly).ReplaceStrings(list);
@@ -143,7 +144,6 @@ class Script
 
                     var _MDToken = ((IType)methodDef.Body.Instructions[3].Operand).MDToken.ToInt32();
                     junkType.Add(typeDef.NestedTypes.FirstOrDefault(net => net.MDToken.ToInt32() == _MDToken));
-
                     object method = invokeMethod.Invoke(invokeField, new object[] { (int)methodDef.Body.Instructions[1].Operand });
 
                     try
@@ -283,7 +283,7 @@ internal static class Memory
         IntPtr address = Memory.GetAddress(from);
         IntPtr address2 = Memory.GetAddress(to);
         uint flNewProtect;
-        Memory.VirtualProtect(address, (IntPtr)5, 64u, out flNewProtect);
+        Memory.VirtualProtect(address, (IntPtr)8, 64u, out flNewProtect);
         if (IntPtr.Size == 8)
         {
             byte* ptr = (byte*)address.ToPointer();
@@ -291,18 +291,21 @@ internal static class Memory
             ptr[1] = 187;
             *(long*)(ptr + 2) = address2.ToInt64();
             ptr[10] = 65;
-            ptr[11] = byte.MaxValue;
+            ptr[11] = 255;
             ptr[12] = 227;
+            Console.WriteLine("[!] Prefer use a 32-bit processor ");
         }
         else if (IntPtr.Size == 4)
         {
             byte* ptr2 = (byte*)address.ToPointer();
-            *ptr2 = 233;
-            *(long*)(ptr2 + 1) = (long)(address2.ToInt32() - address.ToInt32() - 5);
-            ptr2[5] = 195;
+            ptr2[1] = 144;
+            ptr2[2] = 144;
+            ptr2[3] = 233;
+            *(long*)(ptr2 + 4) = (long)(address2.ToInt32() - address.ToInt32() - 5);
+            ptr2[8] = 195;
         }
         uint num;
-        Memory.VirtualProtect(address, (IntPtr)5, flNewProtect, out num);
+        Memory.VirtualProtect(address, (IntPtr)8, flNewProtect, out num);
     }
 
     public static IntPtr GetAddress(MethodBase methodBase)
