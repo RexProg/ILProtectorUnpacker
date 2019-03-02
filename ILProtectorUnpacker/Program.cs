@@ -34,8 +34,9 @@ namespace ILProtectorUnpacker
                 Console.WriteLine("*********************************");
                 Console.WriteLine("***                           ***");
                 Console.WriteLine("***    ILProtector Unpacker   ***");
-                Console.WriteLine("***   V2.0.21.14 - V2.0.22.2  ***");
+                Console.WriteLine("***   V2.0.21.14 - V2.0.22.8  ***");
                 Console.WriteLine("***     Coded By RexProg      ***");
+                Console.WriteLine("***     Updated By krysty     ***");
                 Console.WriteLine("***                           ***");
                 Console.WriteLine("*********************************");
                 Console.ForegroundColor = ConsoleColor.Blue;
@@ -58,6 +59,15 @@ namespace ILProtectorUnpacker
                     return;
                 }
 
+                if (!HasWritePermission(path))
+                {
+                    Console.ForegroundColor = ConsoleColor.Blue;
+                    Console.WriteLine("[!] Can't write to " + Path.GetDirectoryName(path));
+                    Console.WriteLine("[!] Press key to exit...");
+                    Console.Read();
+                    return;
+                }
+
                 Console.ForegroundColor = ConsoleColor.DarkRed;
 
                 AssemblyWriter = new AssemblyWriter(path);
@@ -65,21 +75,39 @@ namespace ILProtectorUnpacker
                 Console.WriteLine("[+] Wait...");
 
                 MainFrames = new StackTrace().GetFrames();
+
+                //Memory.Hook(
+                //    typeof(StackTrace).GetMethod("GetFrame", BindingFlags.Instance | BindingFlags.Public),
+                //    typeof(Program).GetMethod(nameof(Hook), BindingFlags.Instance | BindingFlags.Public)
+                //);
+
+                //Memory.Hook(
+                //    typeof(StackFrame).GetMethod("SetMethodBase", BindingFlags.Instance | BindingFlags.NonPublic),
+                //    typeof(Program).GetMethod(nameof(Hook2), BindingFlags.Instance | BindingFlags.Public)
+                //);
+
+                //Memory.Hook(
+                //    typeof(StackTrace).GetMethod("CaptureStackTrace", BindingFlags.Instance | BindingFlags.NonPublic),
+                //    typeof(Program).GetMethod(nameof(Hook3), BindingFlags.Instance | BindingFlags.Public)
+                //);
+
                 Memory.Hook(
                     typeof(StackTrace).Module.GetType("System.Diagnostics.StackFrameHelper")
                         .GetMethod("GetMethodBase", BindingFlags.Instance | BindingFlags.Public),
-                    typeof(Program).GetMethod("Hook4", BindingFlags.Instance | BindingFlags.Public));
+                    typeof(Program).GetMethod(nameof(Hook4), BindingFlags.Instance | BindingFlags.Public)
+                );
 
                 var types = AssemblyWriter.moduleDef.GetTypes();
                 var list = types as IList<TypeDef> ?? types.ToList();
 
                 var globalType = AssemblyWriter.moduleDef.GlobalType;
 
-                var fieldMdToken = 0;
+                var fieldMdToken = globalType.Fields
+                    .Where(fieldDef => fieldDef.Name == "Invoke")
+                    .Select(fieldDef => fieldDef.MDToken.ToInt32())
+                    .DefaultIfEmpty(0)
+                    .FirstOrDefault();
 
-                foreach (var fieldDef in globalType.Fields)
-                    if (fieldDef.Name == "Invoke")
-                        fieldMdToken = fieldDef.MDToken.ToInt32();
                 if (fieldMdToken == 0)
                     Console.WriteLine("[!] Couldn't find Invoke");
 
@@ -94,33 +122,46 @@ namespace ILProtectorUnpacker
 
                 new StringDecrypter(Assembly).ReplaceStrings(list);
 
-                foreach (var typeDef in JunkType) typeDef.DeclaringType.NestedTypes.Remove(typeDef);
+                foreach (var typeDef in JunkType)
+                {
+                    typeDef.DeclaringType.NestedTypes.Remove(typeDef);
+                }
 
                 var methodDef = globalType.FindStaticConstructor();
 
                 if (methodDef.HasBody)
                 {
                     var startIndex = methodDef.Body.Instructions.IndexOf(methodDef.Body.Instructions.FirstOrDefault(
-                                         inst =>
-                                             inst.OpCode == OpCodes.Call
-                                             && ((IMethod) inst.Operand).Name == "GetIUnknownForObject")) - 2;
+                                         inst => inst.OpCode == OpCodes.Call && ((IMethod)inst.Operand).Name == "GetIUnknownForObject")) - 2;
 
-                    var endindex = methodDef.Body.Instructions.IndexOf(methodDef.Body.Instructions.FirstOrDefault(
-                                       inst =>
-                                           inst.OpCode == OpCodes.Call
-                                           && ((IMethod) inst.Operand).Name == "Release")) + 2;
+                    var endIndex = methodDef.Body.Instructions.IndexOf(methodDef.Body.Instructions.FirstOrDefault(
+                                       inst => inst.OpCode == OpCodes.Call && ((IMethod)inst.Operand).Name == "Release")) + 2;
 
-                    methodDef.Body.ExceptionHandlers.Remove(methodDef.Body.ExceptionHandlers.FirstOrDefault(exh =>
-                        exh.HandlerEnd == methodDef.Body.Instructions[endindex + 1]));
+                    methodDef.Body.ExceptionHandlers.Remove(methodDef.Body.ExceptionHandlers.FirstOrDefault(
+                        exh => exh.HandlerEnd == methodDef.Body.Instructions[endIndex + 1]));
 
-                    for (var i = startIndex; i <= endindex; i++)
+                    for (var i = startIndex; i <= endIndex; i++)
                         methodDef.Body.Instructions.Remove(methodDef.Body.Instructions[startIndex]);
                 }
 
-                foreach (var meth in globalType.Methods.Where(met =>
-                    met.ImplMap?.Module.Name.ToString() == "Protect32.dll" ||
-                    met.ImplMap?.Module.Name.ToString() == "Protect64.dll").ToList())
-                    globalType.Remove(meth);
+                foreach (var def in globalType.Methods
+                    .Where(met => new [] { "Protect32.dll", "Protect64.dll" }
+                        .Any(x => x == met.ImplMap?.Module.Name.ToString())))
+                    globalType.Remove(def);
+
+                var dlls = globalType.Methods.Where(x => x.HasBody && x.Body.HasInstructions)
+                    .SelectMany(x => x.Body.Instructions)
+                    .Where(x => x.OpCode == OpCodes.Ldstr && x.Operand is string)
+                    .Select(x => x.Operand as string)
+                    .Where(x => !string.IsNullOrEmpty(x))
+                    .Where(x => x.StartsWith("Protect") && x.EndsWith(".dll"))
+                    .Distinct()
+                    .ToArray();
+
+                if (dlls.Any())
+                {
+                    Console.WriteLine(string.Join(", ", dlls));
+                }
 
                 var invokeField = globalType.Fields.FirstOrDefault(fld => fld.Name == "Invoke");
                 AssemblyWriter.moduleDef.Types.Remove(invokeField?.FieldType.ToTypeDefOrRef().ResolveTypeDef());
@@ -132,7 +173,7 @@ namespace ILProtectorUnpacker
             }
             catch (Exception ex)
             {
-                Console.WriteLine("[!] Exception :\n" + ex.Message);
+                Console.WriteLine("[!] Exception :\n" + ex.StackTrace);
             }
 
             Console.WriteLine("[!] Press key to exit...");
@@ -141,35 +182,55 @@ namespace ILProtectorUnpacker
 
         private static void InvokeDelegates(IList<TypeDef> typeDefs, MethodInfo invokeMethod, object invokeField)
         {
-            foreach (var typeDef in typeDefs)
-            foreach (var methodDef in typeDef.Methods)
-                if (methodDef.Module.Name == Assembly.ManifestModule.ScopeName && methodDef.HasBody &&
-                    methodDef.Body.Instructions.Count > 2 && methodDef.Body.Instructions[0].OpCode == OpCodes.Ldsfld &&
-                    methodDef.Body.Instructions[0].Operand.ToString().Contains("Invoke") &&
-                    methodDef.Body.Instructions[1].IsLdcI4())
+            var methodDefs = typeDefs.SelectMany(x => x.Methods).Where(x =>
+                x.Module.Name == Assembly.ManifestModule.ScopeName && x.HasBody && 
+                x.Body.Instructions.Count > 2 &&
+                x.Body.Instructions[0].OpCode == OpCodes.Ldsfld &&
+                x.Body.Instructions[0].Operand.ToString().Contains("Invoke") && 
+                x.Body.Instructions[1].IsLdcI4());
+
+            foreach (var methodDef in methodDefs)
+            {
+                CurrentMethod = methodDef;
+
+                var mdToken = ((IType) methodDef.Body.Instructions[3].Operand).MDToken.ToInt32();
+                JunkType.Add(methodDef.DeclaringType.NestedTypes.FirstOrDefault(net => net.MDToken.ToInt32() == mdToken));
+                var index = methodDef.Body.Instructions[1].GetLdcI4Value();
+                if (index == IgnoreIndex) continue;
+
+                var method = invokeMethod.Invoke(invokeField, new object[] {index});
+
+                try
                 {
-                    CurrentMethod = methodDef;
-
-                    var mdToken = ((IType) methodDef.Body.Instructions[3].Operand).MDToken.ToInt32();
-                    JunkType.Add(typeDef.NestedTypes.FirstOrDefault(net => net.MDToken.ToInt32() == mdToken));
-                    var index = methodDef.Body.Instructions[1].GetLdcI4Value();
-                    if (index == IgnoreIndex)
-                        continue;
-
-                    var method = invokeMethod.Invoke(invokeField, new object[] {index});
-
-                    try
-                    {
-                        var dynamicMethodBodyReader = new DynamicMethodBodyReader(AssemblyWriter.moduleDef, method);
-                        dynamicMethodBodyReader.Read();
-                        var method2 = dynamicMethodBodyReader.GetMethod();
-                        AssemblyWriter.WriteMethod(method2);
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine("Error in Read(): " + ex.Message + "\nMethod : " + method);
-                    }
+                    var dynamicMethodBodyReader = new DynamicMethodBodyReader(AssemblyWriter.moduleDef, method);
+                    dynamicMethodBodyReader.Read();
+                    var unpackedMethod = dynamicMethodBodyReader.GetMethod();
+                    AssemblyWriter.WriteMethod(methodDef, unpackedMethod);
                 }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("Error in Read(): " + ex.Message + "\nMethod : " + method);
+                }
+                finally
+                {
+                    CurrentMethod = null;
+                }
+            }
+        }
+
+        public static bool HasWritePermission(string filePath)
+        {
+            try
+            {
+                var tempFilePath = Path.Combine(Path.GetDirectoryName(filePath), "temp.txt");
+                File.Create(tempFilePath).Close();
+                File.Delete(tempFilePath);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return false;
+            }
+            return true;
         }
 
         public StackFrame Hook(int num)
@@ -239,7 +300,7 @@ namespace ILProtectorUnpacker
                 .GetField("rgMethodHandle", BindingFlags.Instance | BindingFlags.NonPublic)
                 ?.GetValue(this);
 
-            var methodHandleValue = rgMethodHandle[i];
+            var methodHandleValue = rgMethodHandle?[i];
 
             var runtimeMethodInfoStub =
                 typeof(StackTrace).Module.GetType("System.RuntimeMethodInfoStub").GetConstructors()[1]

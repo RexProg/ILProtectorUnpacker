@@ -28,34 +28,25 @@ namespace ILProtectorUnpacker
             ((AssemblyResolver)moduleDef.Context.AssemblyResolver).AddToCache(moduleDef);
         }
 
-        internal void WriteMethod(MethodDef methodDef)
+        internal void WriteMethod(MethodDef oldMethodDef, MethodDef newMethodDef)
         {
-            var executingMethod = Program.CurrentMethod;
-
-            if (executingMethod == null)
+            if (oldMethodDef == null)
             {
-                Console.WriteLine("[!] Failed to write " + methodDef);
+                Console.WriteLine("[!] Failed to write " + newMethodDef);
                 return;
             }
-
-            Program.CurrentMethod = null;
-            executingMethod.FreeMethodBody();
-            executingMethod.Body = methodDef.Body;
+            oldMethodDef.FreeMethodBody();
+            oldMethodDef.Body = newMethodDef.Body;
         }
 
         internal void Save()
         {
             try
             {
-                var text = Path.GetDirectoryName(assemblyPath);
-
-                if (!text.EndsWith("\\")) text += "\\";
-
-                var filename = text + Path.GetFileNameWithoutExtension(assemblyPath) + "_Unpacked" +
-                               Path.GetExtension(assemblyPath);
-                var options = new ModuleWriterOptions(moduleDef);
-                options.Logger = DummyLogger.NoThrowInstance;
-                moduleDef.Write(filename, options);
+                var filename = Path.GetFileNameWithoutExtension(assemblyPath) + "_Unpacked" + Path.GetExtension(assemblyPath);
+                var filepath = Path.Combine(Path.GetDirectoryName(assemblyPath), filename);
+                var options = new ModuleWriterOptions(moduleDef) {Logger = DummyLogger.NoThrowInstance};
+                moduleDef.Write(filepath, options);
             }
             catch (Exception ex)
             {
