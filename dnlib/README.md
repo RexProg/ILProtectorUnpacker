@@ -1,26 +1,61 @@
-.NET module/assembly reader/writer library written for [de4dot](https://github.com/0xd4d/de4dot/).
+# dnlib  [![Build status](https://ci.appveyor.com/api/projects/status/h7dqmfac6qjh4hap/branch/master?svg=true)](https://ci.appveyor.com/project/0xd4d/dnlib/branch/master)
 
+.NET module/assembly reader/writer library
 
-dnlib was created because de4dot needed a robust .NET assembly library that
-could handle all types of obfuscated assemblies. de4dot used to use Mono.Cecil
-but since Mono.Cecil can't handle obfuscated assemblies, doesn't fully support
-mixed mode assemblies, doesn't read .NET assemblies the same way the [CLR](http://en.wikipedia.org/wiki/Common_Language_Runtime) does
-and many other missing features de4dot needed, dnlib was a necessity. The API
-is similar because it made porting de4dot to dnlib a lot easier.
+NuGet
+-----
 
-For other applications using dnlib, see [dnSpy](https://github.com/0xd4d/dnSpy) and
-[ConfuserEx](https://github.com/yck1509/ConfuserEx/) (a .NET obfuscator). They use
-many of the more advanced features of dnlib. Have a look at ConfuserEx' writer code
-which gets executed during the assembly writing process.
-
-Want to say thanks? Click the star at the top of the page.
+Soon...
 
 Compiling
 ---------
 
-You must have Visual Studio 2008 or later. The solution file was created by
-Visual Studio 2010, so if you use VS2008, open the solution file and change the
-version number so VS2008 can read it.
+v3.0 requires VS2017 (C#7.3) or later to build it. .NET Core SDK 2.1 or later is also required. See below for breaking changes going from 2.1 to 3.0
+
+An [older v2.1 branch](https://github.com/0xd4d/dnlib/tree/v2.1_VS2010) can be used to build with older VS versions. This branch won't get any new updates.
+
+v3.0 breaking changes
+---------------------
+- VS2017, C# 7.2 is required to compile it
+- It targets .NET Framework 3.5 or later and netstandard 2.0 or later (.NET Framework 2.0 and 3.0 aren't supported)
+- `*MetaData*` -> `*Metadata*`
+- `IMetaData` interface is an abstract class `Metadata`
+- `_32Bit*` -> `Bit32*`
+- `IAssemblyResolver` only has a `Resolve` method. The other methods are still implemented by the default assembly resolver (`AssemblyResolver`)
+- Raw table rows, eg. `RawMethodRow`
+	- They are immutable structs and the methods to read them have been renamed from eg. `ReadMethodRow` -> `TryReadMethodRow`
+	- An indexer replaces their `Read()` method
+	- The `IRawRow` interface has been removed
+- The `Constant` table info (`TableInfo`) has an extra padding byte column
+- `ModuleWriterOptionsBase.Listener` is obsolete, use the new event `ModuleWriterOptionsBase.WriterEvent` instead
+- Module writer events related to the current progress have been removed. Use the new event `ModuleWriterOptionsBase.ProgressUpdated` instead
+- `StrongNameKey`, `PublicKey`, `PublicKeyToken` are immutable classes
+- `RidList` is a struct
+- `IBinaryReader`, `IImageStream` have been removed and replaced with new classes
+	- `MemoryImageStream` -> `ByteArrayDataReaderFactory`
+		- It has two static factory methods, `Create` and `CreateReader`
+	- `BinaryReaderChunk` -> `DataReaderChunk`
+	- To get a reader, call `CreateReader` on `IPEImage`, `DataReaderFactory`, or #Blob stream
+	- The reader is a struct called `DataReader` and it's not disposable
+	- The reader has `Slice` methods to get another reader (replaces the older `Create` methods)
+	- Since the reader is a struct, pass it by reference to methods if its position should be updated when the method returns
+	- `DataReader.Position` is now a `uint` and not a `long` so expressions that were `long` could now be `uint` and possibly overflow/underflow
+		- `reader.Position + 0xFFFFFFFF`
+		- `reader.Position + someRandomValue`
+		- `var pos = reader.Position;` <-- `pos` is a `uint` and not a `long`
+	- `DataReader.Position` only accepts valid values and will throw (an `IOException`) if you set it to an invalid position
+- `FileOffset` is `uint`, used to be `long`
+- `MethodBodyWriterBase` uses `ArrayWriter` instead of `BinaryWriter` (all virtual methods)
+- `ModuleWriter` and `NativeModuleWriter` use `DataWriter` instead of `BinaryWriter`
+- The native module writer now tries to fit the new metadata, method bodies, resources and other data in the old locations. This results in smaller files. It can be disabled by creating your own `NativeModuleWriterOptions`
+- `MetadataOptions`' `OtherHeaps` and `OtherHeapsEnd` have been removed. Use `CustomHeaps`, `MetadataHeapsAdded` and `PreserveHeapOrder()` instead.
+- `Instruction.GetLocal()` returns a local if the instruction is a `ldloca` or `ldloca.s` instruction (it used to return null)
+- `ModuleCreationOptions.PdbImplementation` has been removed and replaced with `PdbOptions`
+- Renamed
+	- `ITokenCreator` -> `ITokenProvider`
+	- `MetadataCreator` -> `MetadataFactory`
+	- `ResourceDataCreator` -> `ResourceDataFactory`
+	- `FullNameCreator` -> `FullNameFactory`
 
 Examples
 --------
@@ -129,6 +164,17 @@ the name of the PDB file will be written to the PE file.
 
 dnlib supports Windows PDBs, portable PDBs and embedded portable PDBs.
 
+Windows PDBs
+------------
+
+It's only possible to write Windows PDBs on Windows (portable PDBs can be written on any OS). dnlib has a managed Windows PDB reader that supports all OSes.
+
+There are two *native* Windows PDB reader and writer implementations, the old `diasymreader.dll` that ships with .NET Framework and `Microsoft.DiaSymReader.Native` which has been updated with more features and bug fixes.
+
+dnlib will use `Microsoft.DiaSymReader.Native` if it exists and fall back to `diasymreader.dll` if needed. `PdbReaderOptions` and `PdbWriterOptions` can be used to disable one of them.
+
+`Microsoft.DiaSymReader.Native` is a NuGet package with 32-bit and 64-bit native DLLs. You have to add a reference to this NuGet package if you want dnlib to use it. dnlib doesn't add a reference to it.
+
 Strong name sign an assembly
 ----------------------------
 
@@ -226,6 +272,7 @@ method.MethodSig.RetType = type;
 Requirements:
 
 - The assembly platform must be x86, x64, IA-64 or ARM (ARM64 isn't supported at the moment). AnyCPU assemblies are not supported. This is as simple as changing (if needed) `ModuleWriterOptions.PEHeadersOptions.Machine` when saving the file. x86 files should set `32-bit required` flag and clear `32-bit preferred` flag in the COR20 header.
+- `ModuleWriterOptions.Cor20HeaderOptions.Flags`: The `IL Only` bit must be cleared.
 - It must be a DLL file (see `ModuleWriterOptions.PEHeadersOptions.Characteristics`). The file will fail to load at runtime if it's an EXE file.
 
 Type classes
@@ -472,7 +519,8 @@ cache.
 ```csharp
     ModuleDefMD mod = ModuleDefMD.Load(...);
     mod.Context = modCtx;	// Use the previously created (and shared) context
-    mod.Context.AssemblyResolver.AddToCache(mod);
+    // This code assumes you're using the default assembly resolver
+    ((AssemblyResolver)mod.Context.AssemblyResolver).AddToCache(mod);
 ```
 
 Resolving types, methods, etc from metadata tokens
@@ -533,7 +581,7 @@ The low level classes are in the `dnlib.DotNet.MD` namespace.
 Open an existing .NET module/assembly and you get a ModuleDefMD. It has several
 properties, eg. `StringsStream` is the #Strings stream.
 
-The `MetaData` property gives you full access to the metadata.
+The `Metadata` property gives you full access to the metadata.
 
 To get a list of all valid TypeDef rids (row IDs), use this code:
 
@@ -541,9 +589,16 @@ To get a list of all valid TypeDef rids (row IDs), use this code:
     using dnlib.DotNet.MD;
     // ...
     ModuleDefMD mod = ModuleDefMD.Load(...);
-    RidList typeDefRids = mod.MetaData.GetTypeDefRidList();
+    RidList typeDefRids = mod.Metadata.GetTypeDefRidList();
     for (int i = 0; i < typeDefRids.Count; i++)
     	Console.WriteLine("rid: {0}", typeDefRids[i]);
 ```
 
-You don't need to create a `ModuleDefMD`, though. See `DotNetFile`.
+You don't need to create a `ModuleDefMD`, though. See `MetadataFactory`.
+
+Credits
+-------
+
+Big thanks to [Ki](https://github.com/yck1509) for writing the managed Windows PDB reader!
+
+[List of all contributors](https://github.com/0xd4d/dnlib/graphs/contributors)

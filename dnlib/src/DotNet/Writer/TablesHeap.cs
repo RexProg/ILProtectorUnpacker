@@ -1,6 +1,5 @@
 // dnlib: See LICENSE.txt for more info
 
-using System.IO;
 using dnlib.IO;
 using dnlib.PE;
 using dnlib.DotNet.MD;
@@ -51,8 +50,8 @@ namespace dnlib.DotNet.Writer {
 		/// Creates portable PDB v1.0 options
 		/// </summary>
 		/// <returns></returns>
-		public static TablesHeapOptions CreatePortablePdbV1_0() {
-			return new TablesHeapOptions {
+		public static TablesHeapOptions CreatePortablePdbV1_0() =>
+			new TablesHeapOptions {
 				Reserved1 = 0,
 				MajorVersion = 2,
 				MinorVersion = 0,
@@ -60,7 +59,6 @@ namespace dnlib.DotNet.Writer {
 				ExtraData = null,
 				HasDeletedRows = null,
 			};
-		}
 	}
 
 	/// <summary>
@@ -74,20 +72,16 @@ namespace dnlib.DotNet.Writer {
 		bool bigGuid;
 		bool bigBlob;
 		bool hasDeletedRows;
-		readonly MetaData metadata;
+		readonly Metadata metadata;
 		readonly TablesHeapOptions options;
 		FileOffset offset;
 		RVA rva;
 
 		/// <inheritdoc/>
-		public FileOffset FileOffset {
-			get { return offset; }
-		}
+		public FileOffset FileOffset => offset;
 
 		/// <inheritdoc/>
-		public RVA RVA {
-			get { return rva; }
-		}
+		public RVA RVA => rva;
 
 #pragma warning disable 1591	// XML doc comment
 		public readonly MDTable<RawModuleRow> ModuleTable = new MDTable<RawModuleRow>(Table.Module, RawRowEqualityComparer.Instance);
@@ -151,14 +145,10 @@ namespace dnlib.DotNet.Writer {
 		public readonly IMDTable[] Tables;
 
 		/// <inheritdoc/>
-		public string Name {
-			get { return IsENC ? "#-" : "#~"; }
-		}
+		public string Name => IsENC ? "#-" : "#~";
 
 		/// <inheritdoc/>
-		public bool IsEmpty {
-			get { return false; }
-		}
+		public bool IsEmpty => false;
 
 		/// <summary>
 		/// <c>true</c> if the Edit 'N Continue name will be used (#-)
@@ -197,32 +187,32 @@ namespace dnlib.DotNet.Writer {
 		/// Its name has been renamed to _Deleted).
 		/// </summary>
 		public bool HasDeletedRows {
-			get { return hasDeletedRows; }
-			set { hasDeletedRows = value; }
+			get => hasDeletedRows;
+			set => hasDeletedRows = value;
 		}
 
 		/// <summary>
 		/// <c>true</c> if #Strings heap size > <c>0xFFFF</c>
 		/// </summary>
 		public bool BigStrings {
-			get { return bigStrings; }
-			set { bigStrings = value; }
+			get => bigStrings;
+			set => bigStrings = value;
 		}
 
 		/// <summary>
 		/// <c>true</c> if #GUID heap size > <c>0xFFFF</c>
 		/// </summary>
 		public bool BigGuid {
-			get { return bigGuid; }
-			set { bigGuid = value; }
+			get => bigGuid;
+			set => bigGuid = value;
 		}
 
 		/// <summary>
 		/// <c>true</c> if #Blob heap size > <c>0xFFFF</c>
 		/// </summary>
 		public bool BigBlob {
-			get { return bigBlob; }
-			set { bigBlob = value; }
+			get => bigBlob;
+			set => bigBlob = value;
 		}
 
 		/// <summary>
@@ -230,11 +220,11 @@ namespace dnlib.DotNet.Writer {
 		/// </summary>
 		/// <param name="metadata">Metadata owner</param>
 		/// <param name="options">Options</param>
-		public TablesHeap(MetaData metadata, TablesHeapOptions options) {
+		public TablesHeap(Metadata metadata, TablesHeapOptions options) {
 			this.metadata = metadata;
 			this.options = options ?? new TablesHeapOptions();
-			this.hasDeletedRows = this.options.HasDeletedRows ?? false;
-			this.Tables = new IMDTable[] {
+			hasDeletedRows = this.options.HasDeletedRows ?? false;
+			Tables = new IMDTable[] {
 				ModuleTable,
 				TypeRefTable,
 				TypeDefTable,
@@ -294,25 +284,15 @@ namespace dnlib.DotNet.Writer {
 			};
 		}
 
-		sealed class RawDummyRow : IRawRow {
+		struct RawDummyRow {
 			public static readonly IEqualityComparer<RawDummyRow> Comparer = new RawDummyRowEqualityComparer();
 			sealed class RawDummyRowEqualityComparer : IEqualityComparer<RawDummyRow> {
-				public bool Equals(RawDummyRow x, RawDummyRow y) {
-					throw new NotSupportedException();
-				}
-
-				public int GetHashCode(RawDummyRow obj) {
-					throw new NotSupportedException();
-				}
+				public bool Equals(RawDummyRow x, RawDummyRow y) => throw new NotSupportedException();
+				public int GetHashCode(RawDummyRow obj) => throw new NotSupportedException();
 			}
 
-			public uint Read(int index) {
-				throw new NotSupportedException();
-			}
-
-			public void Write(int index, uint value) {
-				throw new NotSupportedException();
-			}
+			public uint Read(int index) => throw new NotSupportedException();
+			public void Write(int index, uint value) => throw new NotSupportedException();
 		}
 
 		/// <inheritdoc/>
@@ -325,6 +305,8 @@ namespace dnlib.DotNet.Writer {
 		public void SetOffset(FileOffset offset, RVA rva) {
 			this.offset = offset;
 			this.rva = rva;
+
+			// NOTE: This method can be called twice by NativeModuleWriter, see Metadata.SetOffset() for more info
 		}
 
 		/// <inheritdoc/>
@@ -335,9 +317,7 @@ namespace dnlib.DotNet.Writer {
 		}
 
 		/// <inheritdoc/>
-		public uint GetVirtualSize() {
-			return GetFileLength();
-		}
+		public uint GetVirtualSize() => GetFileLength();
 
 		/// <summary>
 		/// Calculates the length. This will set all MD tables to read-only.
@@ -400,26 +380,24 @@ namespace dnlib.DotNet.Writer {
 			}
 		}
 
-		internal void SetSystemTableRows(uint[] systemTables) {
-			this.systemTables = (uint[])systemTables.Clone();
-		}
+		internal void SetSystemTableRows(uint[] systemTables) => this.systemTables = (uint[])systemTables.Clone();
 		uint[] systemTables;
 
 		/// <inheritdoc/>
-		public void WriteTo(BinaryWriter writer) {
-			writer.Write(options.Reserved1 ?? 0);
-			writer.Write(majorVersion);
-			writer.Write(minorVersion);
-			writer.Write((byte)GetMDStreamFlags());
-			writer.Write(GetLog2Rid());
-			writer.Write(GetValidMask());
-			writer.Write(GetSortedMask());
+		public void WriteTo(DataWriter writer) {
+			writer.WriteUInt32(options.Reserved1 ?? 0);
+			writer.WriteByte(majorVersion);
+			writer.WriteByte(minorVersion);
+			writer.WriteByte((byte)GetMDStreamFlags());
+			writer.WriteByte(GetLog2Rid());
+			writer.WriteUInt64(GetValidMask());
+			writer.WriteUInt64(GetSortedMask());
 			foreach (var mdt in Tables) {
 				if (!mdt.IsEmpty)
-					writer.Write(mdt.Rows);
+					writer.WriteInt32(mdt.Rows);
 			}
 			if (options.ExtraData.HasValue)
-				writer.Write(options.ExtraData.Value);
+				writer.WriteUInt32(options.ExtraData.Value);
 
 			writer.Write(metadata, ModuleTable);
 			writer.Write(metadata, TypeRefTable);
@@ -474,7 +452,7 @@ namespace dnlib.DotNet.Writer {
 			writer.Write(metadata, ImportScopeTable);
 			writer.Write(metadata, StateMachineMethodTable);
 			writer.Write(metadata, CustomDebugInformationTable);
-			writer.WriteZeros((int)(Utils.AlignUp(length, HeapBase.ALIGNMENT) - length));
+			writer.WriteZeroes((int)(Utils.AlignUp(length, HeapBase.ALIGNMENT) - length));
 		}
 
 		MDStreamFlags GetMDStreamFlags() {
@@ -516,8 +494,6 @@ namespace dnlib.DotNet.Writer {
 		}
 
 		/// <inheritdoc/>
-		public override string ToString() {
-			return Name;
-		}
+		public override string ToString() => Name;
 	}
 }

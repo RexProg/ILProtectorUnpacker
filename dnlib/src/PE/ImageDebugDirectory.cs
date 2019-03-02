@@ -22,58 +22,42 @@ namespace dnlib.PE {
 		/// <summary>
 		/// Gets the characteristics (reserved)
 		/// </summary>
-		public uint Characteristics {
-			get { return characteristics; }
-		}
+		public uint Characteristics => characteristics;
 
 		/// <summary>
 		/// Gets the timestamp
 		/// </summary>
-		public uint TimeDateStamp {
-			get { return timeDateStamp; }
-		}
+		public uint TimeDateStamp => timeDateStamp;
 
 		/// <summary>
 		/// Gets the major version
 		/// </summary>
-		public ushort MajorVersion {
-			get { return majorVersion; }
-		}
+		public ushort MajorVersion => majorVersion;
 
 		/// <summary>
 		/// Gets the minor version
 		/// </summary>
-		public ushort MinorVersion {
-			get { return minorVersion; }
-		}
+		public ushort MinorVersion => minorVersion;
 
 		/// <summary>
 		/// Gets the type
 		/// </summary>
-		public ImageDebugType Type {
-			get { return type; }
-		}
+		public ImageDebugType Type => type;
 
 		/// <summary>
 		/// Gets the size of data
 		/// </summary>
-		public uint SizeOfData {
-			get { return sizeOfData; }
-		}
+		public uint SizeOfData => sizeOfData;
 
 		/// <summary>
 		/// RVA of the data
 		/// </summary>
-		public RVA AddressOfRawData {
-			get { return (RVA)addressOfRawData; }
-		}
+		public RVA AddressOfRawData => (RVA)addressOfRawData;
 
 		/// <summary>
 		/// File offset of the data
 		/// </summary>
-		public FileOffset PointerToRawData {
-			get { return (FileOffset)pointerToRawData; }
-		}
+		public FileOffset PointerToRawData => (FileOffset)pointerToRawData;
 
 		/// <summary>
 		/// Constructor
@@ -81,8 +65,8 @@ namespace dnlib.PE {
 		/// <param name="reader">PE file reader pointing to the start of this section</param>
 		/// <param name="verify">Verify section</param>
 		/// <exception cref="BadImageFormatException">Thrown if verification fails</exception>
-		public ImageDebugDirectory(IImageStream reader, bool verify) {
-			SetStartOffset(reader);
+		public ImageDebugDirectory(ref DataReader reader, bool verify) {
+			SetStartOffset(ref reader);
 			characteristics = reader.ReadUInt32();
 			timeDateStamp = reader.ReadUInt32();
 			majorVersion = reader.ReadUInt16();
@@ -91,7 +75,7 @@ namespace dnlib.PE {
 			sizeOfData = reader.ReadUInt32();
 			addressOfRawData = reader.ReadUInt32();
 			pointerToRawData = reader.ReadUInt32();
-			SetEndoffset(reader);
+			SetEndoffset(ref reader);
 		}
 	}
 }

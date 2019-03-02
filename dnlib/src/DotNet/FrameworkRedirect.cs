@@ -11,7 +11,7 @@ namespace dnlib.DotNet {
 		static readonly Dictionary<string, FrameworkRedirectInfo> frmRedir2;
 		static readonly Dictionary<string, FrameworkRedirectInfo> frmRedir4;
 
-		struct FrameworkRedirectInfo {
+		readonly struct FrameworkRedirectInfo {
 			public readonly PublicKeyToken publicKeyToken;
 			public readonly Version redirectVersion;
 
@@ -295,7 +295,7 @@ namespace dnlib.DotNet {
 		}
 
 		/// <summary>
-		/// Redirects a .NET framework assembly from an older version to the correct version
+		/// Redirects a .NET Framework assembly from an older version to the correct version
 		/// loaded at runtime.
 		/// </summary>
 		/// <param name="assembly">Current assembly reference that might get updated</param>
@@ -308,8 +308,38 @@ namespace dnlib.DotNet {
 			if (!sourceModule.IsClr20 && !sourceModule.IsClr40)
 				return;
 
-			FrameworkRedirectInfo redirect;
-			if (!(sourceModule.IsClr20 ? frmRedir2 : frmRedir4).TryGetValue(assembly.Name, out redirect))
+			if (!(sourceModule.IsClr20 ? frmRedir2 : frmRedir4).TryGetValue(assembly.Name, out var redirect))
+				return;
+			if (PublicKeyBase.TokenCompareTo(assembly.PublicKeyOrToken, redirect.publicKeyToken) != 0)
+				return;
+			if (Utils.CompareTo(assembly.Version, redirect.redirectVersion) == 0)
+				return;
+
+			assembly = new AssemblyNameInfo(assembly);
+			assembly.Version = redirect.redirectVersion;
+		}
+
+		/// <summary>
+		/// Redirects a .NET Framework 2.0-3.5 assembly from an older version to the correct version
+		/// loaded at runtime.
+		/// </summary>
+		/// <param name="assembly">Current assembly reference that might get updated</param>
+		public static void ApplyFrameworkRedirectV2(ref IAssembly assembly) =>
+			ApplyFrameworkRedirect(ref assembly, frmRedir2);
+
+		/// <summary>
+		/// Redirects a .NET Framework 4.0+ assembly from an older version to the correct version
+		/// loaded at runtime.
+		/// </summary>
+		/// <param name="assembly">Current assembly reference that might get updated</param>
+		public static void ApplyFrameworkRedirectV4(ref IAssembly assembly) =>
+			ApplyFrameworkRedirect(ref assembly, frmRedir4);
+
+		static void ApplyFrameworkRedirect(ref IAssembly assembly, Dictionary<string, FrameworkRedirectInfo> frmRedir) {
+			if (!Utils.LocaleEquals(assembly.Culture, ""))
+				return;
+
+			if (!frmRedir.TryGetValue(assembly.Name, out var redirect))
 				return;
 			if (PublicKeyBase.TokenCompareTo(assembly.PublicKeyOrToken, redirect.publicKeyToken) != 0)
 				return;

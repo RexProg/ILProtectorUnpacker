@@ -1,9 +1,6 @@
 ﻿// dnlib: See LICENSE.txt for more info
 
 using System;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.IO;
 using dnlib.DotNet.Writer;
 using dnlib.IO;
 using dnlib.PE;
@@ -15,18 +12,14 @@ namespace dnlib.DotNet {
 	}
 
 	abstract class CpuArch {
-		static readonly Dictionary<Machine, CpuArch> toCpuArch = new Dictionary<Machine, CpuArch> {
-			// To support a new CPU arch, the easiest way is to check coreclr/src/ilasm/writer.cpp or
-			// coreclr/src/dlls/mscorpe/stubs.h, eg. ExportStubAMD64Template, ExportStubX86Template,
-			// ExportStubARMTemplate, ExportStubIA64Template, or use ilasm to generate a file with
-			// exports and check the stub
-			{ Machine.I386, new X86CpuArch() },
-			{ Machine.AMD64, new X64CpuArch() },
-			{ Machine.IA64, new ItaniumCpuArch() },
-			{ Machine.ARMNT, new ArmCpuArch() },
-			//TODO: Support ARM64
-			// { Machine.ARM64, new Arm64CpuArch() },
-		};
+		// To support a new CPU arch, the easiest way is to check coreclr/src/ilasm/writer.cpp or
+		// coreclr/src/dlls/mscorpe/stubs.h, eg. ExportStubAMD64Template, ExportStubX86Template,
+		// ExportStubARMTemplate, ExportStubIA64Template, or use ilasm to generate a file with
+		// exports and check the stub
+		static readonly X86CpuArch x86CpuArch = new X86CpuArch();
+		static readonly X64CpuArch x64CpuArch = new X64CpuArch();
+		static readonly ItaniumCpuArch itaniumCpuArch = new ItaniumCpuArch();
+		static readonly ArmCpuArch armCpuArch = new ArmCpuArch();
 
 		/// <summary>
 		/// Gets the required alignment for the stubs, must be a power of 2
@@ -50,7 +43,47 @@ namespace dnlib.DotNet {
 		public abstract uint GetStubCodeOffset(StubType stubType);
 
 		public static bool TryGetCpuArch(Machine machine, out CpuArch cpuArch) {
-			return toCpuArch.TryGetValue(machine, out cpuArch);
+			switch (machine) {
+			case Machine.I386:
+			case Machine.I386_Native_Apple:
+			case Machine.I386_Native_FreeBSD:
+			case Machine.I386_Native_Linux:
+			case Machine.I386_Native_NetBSD:
+				cpuArch = x86CpuArch;
+				return true;
+
+			case Machine.AMD64:
+			case Machine.AMD64_Native_Apple:
+			case Machine.AMD64_Native_FreeBSD:
+			case Machine.AMD64_Native_Linux:
+			case Machine.AMD64_Native_NetBSD:
+				cpuArch = x64CpuArch;
+				return true;
+
+			case Machine.IA64:
+				cpuArch = itaniumCpuArch;
+				return true;
+
+			case Machine.ARMNT:
+			case Machine.ARMNT_Native_Apple:
+			case Machine.ARMNT_Native_FreeBSD:
+			case Machine.ARMNT_Native_Linux:
+			case Machine.ARMNT_Native_NetBSD:
+				cpuArch = armCpuArch;
+				return true;
+
+			case Machine.ARM64:
+			case Machine.ARM64_Native_Apple:
+			case Machine.ARM64_Native_FreeBSD:
+			case Machine.ARM64_Native_Linux:
+			case Machine.ARM64_Native_NetBSD:
+				//TODO: Support ARM64
+				goto default;
+
+			default:
+				cpuArch = null;
+				return false;
+			}
 		}
 
 		/// <summary>
@@ -60,13 +93,10 @@ namespace dnlib.DotNet {
 		/// <param name="peImage">PE image</param>
 		/// <param name="funcRva">Updated with RVA of func field</param>
 		/// <returns></returns>
-		public bool TryGetExportedRvaFromStub(IBinaryReader reader, IPEImage peImage, out uint funcRva) {
-			bool b = TryGetExportedRvaFromStubCore(reader, peImage, out funcRva);
-			Debug.Assert(b);
-			return b;
-		}
+		public bool TryGetExportedRvaFromStub(ref DataReader reader, IPEImage peImage, out uint funcRva) =>
+			TryGetExportedRvaFromStubCore(ref reader, peImage, out funcRva);
 
-		protected abstract bool TryGetExportedRvaFromStubCore(IBinaryReader reader, IPEImage peImage, out uint funcRva);
+		protected abstract bool TryGetExportedRvaFromStubCore(ref DataReader reader, IPEImage peImage, out uint funcRva);
 
 		/// <summary>
 		/// Writes stub relocs, if needed
@@ -85,7 +115,7 @@ namespace dnlib.DotNet {
 		/// <param name="imageBase">Image base</param>
 		/// <param name="stubRva">RVA of this stub</param>
 		/// <param name="managedFuncRva">RVA of a pointer-sized field that contains the absolute address of the managed function</param>
-		public abstract void WriteStub(StubType stubType, BinaryWriter writer, ulong imageBase, uint stubRva, uint managedFuncRva);
+		public abstract void WriteStub(StubType stubType, DataWriter writer, ulong imageBase, uint stubRva, uint managedFuncRva);
 	}
 
 	sealed class X86CpuArch : CpuArch {
@@ -119,10 +149,10 @@ namespace dnlib.DotNet {
 			}
 		}
 
-		protected override bool TryGetExportedRvaFromStubCore(IBinaryReader reader, IPEImage peImage, out uint funcRva) {
+		protected override bool TryGetExportedRvaFromStubCore(ref DataReader reader, IPEImage peImage, out uint funcRva) {
 			funcRva = 0;
 
-			// FF25xxxxxxxx	jmp DWORD PTR [xxxxxxxx]
+			// FF25xxxxxxxx		jmp DWORD PTR [xxxxxxxx]
 			if (reader.ReadUInt16() != 0x25FF)
 				return false;
 			funcRva = reader.ReadUInt32() - (uint)peImage.ImageNTHeaders.OptionalHeader.ImageBase;
@@ -140,13 +170,13 @@ namespace dnlib.DotNet {
 			}
 		}
 
-		public override void WriteStub(StubType stubType, BinaryWriter writer, ulong imageBase, uint stubRva, uint managedFuncRva) {
+		public override void WriteStub(StubType stubType, DataWriter writer, ulong imageBase, uint stubRva, uint managedFuncRva) {
 			switch (stubType) {
 			case StubType.Export:
 			case StubType.EntryPoint:
-				writer.Write((ushort)0);// padding
-				writer.Write((ushort)0x25FF);
-				writer.Write((uint)imageBase + managedFuncRva);
+				writer.WriteUInt16(0);// padding
+				writer.WriteUInt16(0x25FF);
+				writer.WriteUInt32((uint)imageBase + managedFuncRva);
 				break;
 			default:
 				throw new ArgumentOutOfRangeException();
@@ -185,7 +215,7 @@ namespace dnlib.DotNet {
 			}
 		}
 
-		protected override bool TryGetExportedRvaFromStubCore(IBinaryReader reader, IPEImage peImage, out uint funcRva) {
+		protected override bool TryGetExportedRvaFromStubCore(ref DataReader reader, IPEImage peImage, out uint funcRva) {
 			funcRva = 0;
 
 			// 48A1xxxxxxxxxxxxxxxx		movabs	rax,[xxxxxxxxxxxxxxxx]
@@ -213,14 +243,14 @@ namespace dnlib.DotNet {
 			}
 		}
 
-		public override void WriteStub(StubType stubType, BinaryWriter writer, ulong imageBase, uint stubRva, uint managedFuncRva) {
+		public override void WriteStub(StubType stubType, DataWriter writer, ulong imageBase, uint stubRva, uint managedFuncRva) {
 			switch (stubType) {
 			case StubType.Export:
 			case StubType.EntryPoint:
-				writer.Write((ushort)0);// padding
-				writer.Write((ushort)0xA148);
-				writer.Write(imageBase + managedFuncRva);
-				writer.Write((ushort)0xE0FF);
+				writer.WriteUInt16(0);// padding
+				writer.WriteUInt16(0xA148);
+				writer.WriteUInt64(imageBase + managedFuncRva);
+				writer.WriteUInt16(0xE0FF);
 				break;
 			default:
 				throw new ArgumentOutOfRangeException();
@@ -259,7 +289,7 @@ namespace dnlib.DotNet {
 			}
 		}
 
-		protected override bool TryGetExportedRvaFromStubCore(IBinaryReader reader, IPEImage peImage, out uint funcRva) {
+		protected override bool TryGetExportedRvaFromStubCore(ref DataReader reader, IPEImage peImage, out uint funcRva) {
 			funcRva = 0;
 
 			// From ExportStubIA64Template in coreclr/src/ilasm/writer.cpp
@@ -279,7 +309,7 @@ namespace dnlib.DotNet {
 			// 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 //address of VTFixup slot
 			ulong addrTemplate = reader.ReadUInt64();
 			ulong absAddr = reader.ReadUInt64();
-			reader.Position = (long)peImage.ToFileOffset((RVA)(addrTemplate - peImage.ImageNTHeaders.OptionalHeader.ImageBase));
+			reader.Position = (uint)peImage.ToFileOffset((RVA)(addrTemplate - peImage.ImageNTHeaders.OptionalHeader.ImageBase));
 			if (reader.ReadUInt64() != 0x40A010180200480BUL)
 				return false;
 			if (reader.ReadUInt64() != 0x0004000000283024UL)
@@ -308,16 +338,16 @@ namespace dnlib.DotNet {
 			}
 		}
 
-		public override void WriteStub(StubType stubType, BinaryWriter writer, ulong imageBase, uint stubRva, uint managedFuncRva) {
+		public override void WriteStub(StubType stubType, DataWriter writer, ulong imageBase, uint stubRva, uint managedFuncRva) {
 			switch (stubType) {
 			case StubType.Export:
 			case StubType.EntryPoint:
-				writer.Write(0x40A010180200480BUL);
-				writer.Write(0x0004000000283024UL);
-				writer.Write(0x5060101812000810UL);
-				writer.Write(0x0080006000038004UL);
-				writer.Write(imageBase + stubRva);
-				writer.Write(imageBase + managedFuncRva);
+				writer.WriteUInt64(0x40A010180200480BUL);
+				writer.WriteUInt64(0x0004000000283024UL);
+				writer.WriteUInt64(0x5060101812000810UL);
+				writer.WriteUInt64(0x0080006000038004UL);
+				writer.WriteUInt64(imageBase + stubRva);
+				writer.WriteUInt64(imageBase + managedFuncRva);
 				break;
 			default:
 				throw new ArgumentOutOfRangeException();
@@ -356,7 +386,7 @@ namespace dnlib.DotNet {
 			}
 		}
 
-		protected override bool TryGetExportedRvaFromStubCore(IBinaryReader reader, IPEImage peImage, out uint funcRva) {
+		protected override bool TryGetExportedRvaFromStubCore(ref DataReader reader, IPEImage peImage, out uint funcRva) {
 			funcRva = 0;
 
 			// DFF800F0		ldr.w	pc,[pc]
@@ -378,12 +408,12 @@ namespace dnlib.DotNet {
 			}
 		}
 
-		public override void WriteStub(StubType stubType, BinaryWriter writer, ulong imageBase, uint stubRva, uint managedFuncRva) {
+		public override void WriteStub(StubType stubType, DataWriter writer, ulong imageBase, uint stubRva, uint managedFuncRva) {
 			switch (stubType) {
 			case StubType.Export:
 			case StubType.EntryPoint:
-				writer.Write(0xF000F8DF);
-				writer.Write((uint)imageBase + managedFuncRva);
+				writer.WriteUInt32(0xF000F8DF);
+				writer.WriteUInt32((uint)imageBase + managedFuncRva);
 				break;
 			default:
 				throw new ArgumentOutOfRangeException();

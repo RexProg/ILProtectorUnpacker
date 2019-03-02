@@ -21,7 +21,7 @@ namespace dnlib.Threading {
 	}
 
 	/// <summary>
-	/// Simple class using <see cref="Monitor.Enter"/> and <see cref="Monitor.Exit"/>
+	/// Simple class using Monitor.Enter() and Monitor.Exit()
 	/// and just like <c>ReaderWriterLockSlim</c> it prevents recursive locks. It doesn't support
 	/// multiple readers. A reader lock is the same as a writer lock.
 	/// </summary>
@@ -33,16 +33,14 @@ namespace dnlib.Threading {
 		/// Creates a new instance of this class
 		/// </summary>
 		/// <returns></returns>
-		public static Lock Create() {
-			return new Lock();
-		}
+		public static Lock Create() => new Lock();
 
 		/// <summary>
 		/// Constructor
 		/// </summary>
 		Lock() {
-			this.lockObj = new object();
-			this.recurseCount = 0;
+			lockObj = new object();
+			recurseCount = 0;
 		}
 
 		/// <summary>

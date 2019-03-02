@@ -1,7 +1,7 @@
 ﻿// dnlib: See LICENSE.txt for more info
 
 using System;
-using System.IO;
+using dnlib.IO;
 
 namespace dnlib.DotNet.Writer {
 	/// <summary>
@@ -9,26 +9,27 @@ namespace dnlib.DotNet.Writer {
 	/// </summary>
 	public sealed class PdbHeap : HeapBase {
 		/// <inheritdoc/>
-		public override string Name {
-			get { return "#Pdb"; }
-		}
+		public override string Name => "#Pdb";
 
 		/// <summary>
 		/// Gets the PDB ID. This is always 20 bytes in size.
 		/// </summary>
-		public byte[] PdbId {
-			get { return pdbId; }
-		}
+		public byte[] PdbId => pdbId;
 		readonly byte[] pdbId;
 
 		/// <summary>
 		/// Gets/sets the entry point token
 		/// </summary>
 		public uint EntryPoint {
-			get { return entryPoint; }
-			set { entryPoint = value; }
+			get => entryPoint;
+			set => entryPoint = value;
 		}
 		uint entryPoint;
+
+		/// <summary>
+		/// Gets the offset of the 20-byte PDB ID
+		/// </summary>
+		public FileOffset PdbIdOffset => FileOffset;
 
 		/// <summary>
 		/// Gets/sets the referenced type system tables
@@ -61,9 +62,7 @@ namespace dnlib.DotNet.Writer {
 		/// <summary>
 		/// Gets the type system table rows. This table has 64 elements.
 		/// </summary>
-		public uint[] TypeSystemTableRows {
-			get { return typeSystemTableRows; }
-		}
+		public uint[] TypeSystemTableRows => typeSystemTableRows;
 		readonly uint[] typeSystemTableRows;
 
 		/// <summary>
@@ -82,16 +81,16 @@ namespace dnlib.DotNet.Writer {
 		}
 
 		/// <inheritdoc/>
-		protected override void WriteToImpl(BinaryWriter writer) {
+		protected override void WriteToImpl(DataWriter writer) {
 			if (!referencedTypeSystemTablesInitd)
 				throw new InvalidOperationException("ReferencedTypeSystemTables hasn't been initialized yet");
-			writer.Write(pdbId);
-			writer.Write(entryPoint);
-			writer.Write(referencedTypeSystemTables);
+			writer.WriteBytes(pdbId);
+			writer.WriteUInt32(entryPoint);
+			writer.WriteUInt64(referencedTypeSystemTables);
 			ulong t = referencedTypeSystemTables;
 			for (int i = 0; i < typeSystemTableRows.Length; i++, t >>= 1) {
 				if (((int)t & 1) != 0)
-					writer.Write(typeSystemTableRows[i]);
+					writer.WriteUInt32(typeSystemTableRows[i]);
 			}
 		}
 	}

@@ -1,8 +1,7 @@
 // dnlib: See LICENSE.txt for more info
 
-﻿using System;
+using System;
 using System.Collections.Generic;
-using System.IO;
 using dnlib.IO;
 using dnlib.DotNet.MD;
 using System.Diagnostics;
@@ -32,15 +31,11 @@ namespace dnlib.DotNet.Writer {
 			public readonly UTF8String Value;
 			public readonly uint StringsId;
 			public uint StringsOffset;
-			public override string ToString() {
-				return string.Format("{0:X8} {1:X4} {2}", StringsId, StringsOffset, Value.String);
-			}
+			public override string ToString() => $"{StringsId:X8} {StringsOffset:X4} {Value.String}";
 		}
 
 		/// <inheritdoc/>
-		public override string Name {
-			get { return "#Strings"; }
-		}
+		public override string Name => "#Strings";
 
 		/// <summary>
 		/// Populates strings from an existing <see cref="StringsStream"/> (eg. to preserve
@@ -54,21 +49,20 @@ namespace dnlib.DotNet.Writer {
 				throw new InvalidOperationException("Can't call method twice");
 			if (nextOffset != 1)
 				throw new InvalidOperationException("Add() has already been called");
-			if (stringsStream == null || stringsStream.ImageStreamLength == 0)
+			if (stringsStream == null || stringsStream.StreamLength == 0)
 				return;
 
-			using (var reader = stringsStream.GetClonedImageStream()) {
-				originalData = reader.ReadAllBytes();
-				nextOffset = (uint)originalData.Length;
-				Populate(reader);
-			}
+			var reader = stringsStream.CreateReader();
+			originalData = reader.ToArray();
+			nextOffset = (uint)originalData.Length;
+			Populate(ref reader);
 		}
 
-		void Populate(IImageStream reader) {
+		void Populate(ref DataReader reader) {
 			reader.Position = 1;
 			while (reader.Position < reader.Length) {
 				uint offset = (uint)reader.Position;
-				var bytes = reader.ReadBytesUntilByte(0);
+				var bytes = reader.TryReadBytesUntil(0);
 				if (bytes == null)
 					break;
 
@@ -82,9 +76,10 @@ namespace dnlib.DotNet.Writer {
 			}
 		}
 
-		internal void AddOptimizedStrings() {
+		internal void AddOptimizedStringsAndSetReadOnly() {
 			if (isReadOnly)
 				throw new ModuleWriterException("Trying to modify #Strings when it's read-only");
+			SetReadOnly();
 
 			stringsOffsetInfos.Sort(Comparison_StringsOffsetInfoSorter);
 
@@ -142,11 +137,9 @@ namespace dnlib.DotNet.Writer {
 			if (UTF8String.IsNullOrEmpty(s))
 				return 0;
 
-			StringsOffsetInfo info;
-			if (toStringsOffsetInfo.TryGetValue(s, out info))
+			if (toStringsOffsetInfo.TryGetValue(s, out var info))
 				return info.StringsId;
-			uint offset;
-			if (cachedDict.TryGetValue(s, out offset))
+			if (cachedDict.TryGetValue(s, out uint offset))
 				return offset;
 
 			if (Array.IndexOf(s.Data, (byte)0) >= 0)
@@ -171,12 +164,11 @@ namespace dnlib.DotNet.Writer {
 				throw new ModuleWriterException("This method can only be called after all strings have been added and this heap is read-only");
 			if ((offsetId & STRINGS_ID_FLAG) == 0)
 				return offsetId;
-			StringsOffsetInfo info;
-			if (offsetIdToInfo.TryGetValue(offsetId, out info)) {
+			if (offsetIdToInfo.TryGetValue(offsetId, out var info)) {
 				Debug.Assert(info.StringsOffset != 0);
 				return info.StringsOffset;
 			}
-			throw new ArgumentOutOfRangeException("offsetId");
+			throw new ArgumentOutOfRangeException(nameof(offsetId));
 		}
 
 		/// <summary>
@@ -203,45 +195,38 @@ namespace dnlib.DotNet.Writer {
 		}
 
 		/// <inheritdoc/>
-		public override uint GetRawLength() {
-			return nextOffset;
-		}
+		public override uint GetRawLength() => nextOffset;
 
 		/// <inheritdoc/>
-		protected override void WriteToImpl(BinaryWriter writer) {
+		protected override void WriteToImpl(DataWriter writer) {
 			if (originalData != null)
-				writer.Write(originalData);
+				writer.WriteBytes(originalData);
 			else
-				writer.Write((byte)0);
+				writer.WriteByte(0);
 
 			uint offset = originalData != null ? (uint)originalData.Length : 1;
 			foreach (var s in cached) {
-				byte[] rawData;
-				if (userRawData != null && userRawData.TryGetValue(offset, out rawData)) {
+				if (userRawData != null && userRawData.TryGetValue(offset, out var rawData)) {
 					if (rawData.Length != s.Data.Length + 1)
 						throw new InvalidOperationException("Invalid length of raw data");
-					writer.Write(rawData);
+					writer.WriteBytes(rawData);
 				}
 				else {
-					writer.Write(s.Data);
-					writer.Write((byte)0);
+					writer.WriteBytes(s.Data);
+					writer.WriteByte(0);
 				}
 				offset += (uint)s.Data.Length + 1;
 			}
 		}
 
 		/// <inheritdoc/>
-		public int GetRawDataSize(UTF8String data) {
-			return data.Data.Length + 1;
-		}
+		public int GetRawDataSize(UTF8String data) => data.Data.Length + 1;
 
 		/// <inheritdoc/>
 		public void SetRawData(uint offset, byte[] rawData) {
-			if (rawData == null)
-				throw new ArgumentNullException("rawData");
 			if (userRawData == null)
 				userRawData = new Dictionary<uint, byte[]>();
-			userRawData[offset] = rawData;
+			userRawData[offset] = rawData ?? throw new ArgumentNullException(nameof(rawData));
 		}
 
 		/// <inheritdoc/>

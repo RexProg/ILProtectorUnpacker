@@ -2,24 +2,29 @@
 
 using System;
 using System.Diagnostics;
-using System.Text;
 using dnlib.IO;
 
 namespace dnlib.DotNet.Pdb.Portable {
 	struct LocalConstantSigBlobReader {
 		readonly ModuleDef module;
-		readonly IImageStream reader;
-		/*readonly*/ GenericParamContext gpContext;
+		DataReader reader;
+		readonly GenericParamContext gpContext;
 		RecursionCounter recursionCounter;
 
-		public LocalConstantSigBlobReader(ModuleDef module, IImageStream reader, GenericParamContext gpContext) {
+		public LocalConstantSigBlobReader(ModuleDef module, ref DataReader reader, GenericParamContext gpContext) {
 			this.module = module;
 			this.reader = reader;
 			this.gpContext = gpContext;
-			recursionCounter = default(RecursionCounter);
+			recursionCounter = default;
 		}
 
 		public bool Read(out TypeSig type, out object value) {
+			bool b = ReadCatch(out type, out value);
+			Debug.Assert(!b || reader.Position == reader.Length);
+			return b;
+		}
+
+		bool ReadCatch(out TypeSig type, out object value) {
 			try {
 				return ReadCore(out type, out value);
 			}
@@ -52,7 +57,7 @@ namespace dnlib.DotNet.Pdb.Portable {
 
 			case ElementType.Char:
 				type = module.CorLibTypes.Char;
-				value = (char)reader.ReadUInt16();
+				value = reader.ReadChar();
 				if (reader.Position < reader.Length)
 					type = ReadTypeDefOrRefSig();
 				res = true;
@@ -141,13 +146,13 @@ namespace dnlib.DotNet.Pdb.Portable {
 				break;
 
 			case ElementType.Ptr:
-				res = Read(out type, out value);
+				res = ReadCatch(out type, out value);
 				if (res)
 					type = new PtrSig(type);
 				break;
 
 			case ElementType.ByRef:
-				res = Read(out type, out value);
+				res = ReadCatch(out type, out value);
 				if (res)
 					type = new ByRefSig(type);
 				break;
@@ -198,14 +203,14 @@ namespace dnlib.DotNet.Pdb.Portable {
 
 			case ElementType.CModReqd:
 				tdr = ReadTypeDefOrRef();
-				res = Read(out type, out value);
+				res = ReadCatch(out type, out value);
 				if (res)
 					type = new CModReqdSig(tdr, type);
 				break;
 
 			case ElementType.CModOpt:
 				tdr = ReadTypeDefOrRef();
-				res = Read(out type, out value);
+				res = ReadCatch(out type, out value);
 				if (res)
 					type = new CModOptSig(tdr, type);
 				break;
@@ -243,15 +248,13 @@ namespace dnlib.DotNet.Pdb.Portable {
 		static readonly UTF8String stringDateTime = new UTF8String("DateTime");
 
 		static bool GetName(ITypeDefOrRef tdr, out UTF8String @namespace, out UTF8String name) {
-			var tr = tdr as TypeRef;
-			if (tr != null) {
+			if (tdr is TypeRef tr) {
 				@namespace = tr.Namespace;
 				name = tr.Name;
 				return true;
 			}
 
-			var td = tdr as TypeDef;
-			if (td != null) {
+			if (tdr is TypeDef td) {
 				@namespace = td.Namespace;
 				name = td.Name;
 				return true;
@@ -264,7 +267,7 @@ namespace dnlib.DotNet.Pdb.Portable {
 
 		TypeSig ReadTypeDefOrRefSig() {
 			uint codedToken;
-			if (!reader.ReadCompressedUInt32(out codedToken))
+			if (!reader.TryReadCompressedUInt32(out codedToken))
 				return null;
 			ISignatureReaderHelper helper = module;
 			var tdr = helper.ResolveTypeDefOrRef(codedToken, gpContext);
@@ -273,7 +276,7 @@ namespace dnlib.DotNet.Pdb.Portable {
 
 		ITypeDefOrRef ReadTypeDefOrRef() {
 			uint codedToken;
-			if (!reader.ReadCompressedUInt32(out codedToken))
+			if (!reader.TryReadCompressedUInt32(out codedToken))
 				return null;
 			ISignatureReaderHelper helper = module;
 			var tdr = helper.ResolveTypeDefOrRef(codedToken, gpContext);
@@ -290,7 +293,8 @@ namespace dnlib.DotNet.Pdb.Portable {
 			if (b == 0xFF && reader.Position == reader.Length)
 				return null;
 			reader.Position--;
-			return Encoding.Unicode.GetString(reader.ReadRemainingBytes());
+			Debug.Assert((reader.BytesLeft & 1) == 0);
+			return reader.ReadUtf16String((int)(reader.BytesLeft / 2));
 		}
 	}
 }

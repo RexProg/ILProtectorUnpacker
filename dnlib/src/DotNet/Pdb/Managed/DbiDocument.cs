@@ -1,6 +1,7 @@
 ﻿// dnlib: See LICENSE.txt for more info
 
 ﻿using System;
+using System.Diagnostics;
 using System.Diagnostics.SymbolStore;
 using dnlib.DotNet.Pdb.Symbols;
 using dnlib.IO;
@@ -13,47 +14,46 @@ namespace dnlib.DotNet.Pdb.Managed {
 		Guid documentType;
 		Guid checkSumAlgorithmId;
 		byte[] checkSum;
+		byte[] sourceCode;
 
-		public override string URL {
-			get { return url; }
-		}
-		public override Guid Language {
-			get { return language; }
-		}
-		public override Guid LanguageVendor {
-			get { return languageVendor; }
-		}
-		public override Guid DocumentType {
-			get { return documentType; }
-		}
-		public override Guid CheckSumAlgorithmId {
-			get { return checkSumAlgorithmId; }
-		}
-		public override byte[] CheckSum {
-			get { return checkSum; }
-		}
+		public override string URL => url;
+		public override Guid Language => language;
+		public override Guid LanguageVendor => languageVendor;
+		public override Guid DocumentType => documentType;
+		public override Guid CheckSumAlgorithmId => checkSumAlgorithmId;
+		public override byte[] CheckSum => checkSum;
+		byte[] SourceCode => sourceCode;
+
 		public override PdbCustomDebugInfo[] CustomDebugInfos {
-			get { return emptyPdbCustomDebugInfos; }
+			get {
+				if (customDebugInfos == null) {
+					var sourceCode = SourceCode;
+					if (sourceCode != null)
+						customDebugInfos = new PdbCustomDebugInfo[1] { new PdbEmbeddedSourceCustomDebugInfo(sourceCode) };
+					else
+						customDebugInfos = Array2.Empty<PdbCustomDebugInfo>();
+				}
+				return customDebugInfos;
+			}
 		}
-		static readonly PdbCustomDebugInfo[] emptyPdbCustomDebugInfos = new PdbCustomDebugInfo[0];
+		PdbCustomDebugInfo[] customDebugInfos;
 
 		public DbiDocument(string url) {
 			this.url = url;
 			documentType = SymDocumentType.Text;
 		}
 
-		public void Read(IImageStream stream) {
-			stream.Position = 0;
-			language = new Guid(stream.ReadBytes(0x10));
-			languageVendor = new Guid(stream.ReadBytes(0x10));
-			documentType = new Guid(stream.ReadBytes(0x10));
-			checkSumAlgorithmId = new Guid(stream.ReadBytes(0x10));
-
-			var len = stream.ReadInt32();
-			if (stream.ReadUInt32() != 0)
-				throw new PdbException("Unexpected value");
-
-			checkSum = stream.ReadBytes(len);
+		public void Read(ref DataReader reader) {
+			reader.Position = 0;
+			language = reader.ReadGuid();
+			languageVendor = reader.ReadGuid();
+			documentType = reader.ReadGuid();
+			checkSumAlgorithmId = reader.ReadGuid();
+			int checkSumLen = reader.ReadInt32();
+			int sourceLen = reader.ReadInt32();
+			checkSum = reader.ReadBytes(checkSumLen);
+			sourceCode = sourceLen == 0 ? null : reader.ReadBytes(sourceLen);
+			Debug.Assert(reader.BytesLeft == 0);
 		}
 	}
 }

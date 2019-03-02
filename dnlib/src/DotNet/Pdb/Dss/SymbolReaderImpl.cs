@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using dnlib.DotNet.Emit;
 using dnlib.DotNet.Pdb.Symbols;
@@ -10,28 +11,23 @@ using dnlib.DotNet.Pdb.WindowsPdb;
 namespace dnlib.DotNet.Pdb.Dss {
 	sealed class SymbolReaderImpl : SymbolReader {
 		ModuleDef module;
-		readonly ISymUnmanagedReader reader;
+		ISymUnmanagedReader reader;
+		object[] objsToKeepAlive;
 
 		const int E_FAIL = unchecked((int)0x80004005);
 
-		/// <summary>
-		/// Constructor
-		/// </summary>
-		/// <param name="reader">An unmanaged symbol reader</param>
-		public SymbolReaderImpl(ISymUnmanagedReader reader) {
-			if (reader == null)
-				throw new ArgumentNullException("reader");
-			this.reader = reader;
+		public SymbolReaderImpl(ISymUnmanagedReader reader, object[] objsToKeepAlive) {
+			this.reader = reader ?? throw new ArgumentNullException(nameof(reader));
+			this.objsToKeepAlive = objsToKeepAlive ?? throw new ArgumentNullException(nameof(objsToKeepAlive));
 		}
 
-		public override PdbFileKind PdbFileKind {
-			get { return PdbFileKind.WindowsPDB; }
-		}
+		~SymbolReaderImpl() => Dispose(false);
+
+		public override PdbFileKind PdbFileKind => PdbFileKind.WindowsPDB;
 
 		public override int UserEntryPoint {
 			get {
-				uint token;
-				int hr = reader.GetUserEntryPoint(out token);
+				int hr = reader.GetUserEntryPoint(out uint token);
 				if (hr == E_FAIL)
 					token = 0;
 				else
@@ -43,8 +39,7 @@ namespace dnlib.DotNet.Pdb.Dss {
 		public override IList<SymbolDocument> Documents {
 			get {
 				if (documents == null) {
-					uint numDocs;
-					reader.GetDocuments(0, out numDocs, null);
+					reader.GetDocuments(0, out uint numDocs, null);
 					var unDocs = new ISymUnmanagedDocument[numDocs];
 					reader.GetDocuments((uint)unDocs.Length, out numDocs, unDocs);
 					var docs = new SymbolDocument[numDocs];
@@ -57,13 +52,10 @@ namespace dnlib.DotNet.Pdb.Dss {
 		}
 		volatile SymbolDocument[] documents;
 
-		public override void Initialize(ModuleDef module) {
-			this.module = module;
-		}
+		public override void Initialize(ModuleDef module) => this.module = module;
 
 		public override SymbolMethod GetMethod(MethodDef method, int version) {
-			ISymUnmanagedMethod unMethod;
-			int hr = reader.GetMethodByVersion(method.MDToken.Raw, version, out unMethod);
+			int hr = reader.GetMethodByVersion(method.MDToken.Raw, version, out var unMethod);
 			if (hr == E_FAIL)
 				return null;
 			Marshal.ThrowExceptionForHR(hr);
@@ -76,8 +68,7 @@ namespace dnlib.DotNet.Pdb.Dss {
 				result.Add(asyncMethod);
 
 			const string CDI_NAME = "MD2";
-			uint bufSize;
-			reader.GetSymAttribute(method.MDToken.Raw, CDI_NAME, 0, out bufSize, null);
+			reader.GetSymAttribute(method.MDToken.Raw, CDI_NAME, 0, out uint bufSize, null);
 			if (bufSize == 0)
 				return;
 			var cdiData = new byte[bufSize];
@@ -86,6 +77,83 @@ namespace dnlib.DotNet.Pdb.Dss {
 		}
 
 		public override void GetCustomDebugInfos(int token, GenericParamContext gpContext, IList<PdbCustomDebugInfo> result) {
+			if (token == 0x00000001)
+				GetCustomDebugInfos_ModuleDef(result);
+		}
+
+		void GetCustomDebugInfos_ModuleDef(IList<PdbCustomDebugInfo> result) {
+			var sourceLinkData = GetSourceLinkData();
+			if (sourceLinkData != null)
+				result.Add(new PdbSourceLinkCustomDebugInfo(sourceLinkData));
+			var sourceServerData = GetSourceServerData();
+			if (sourceServerData != null)
+				result.Add(new PdbSourceServerCustomDebugInfo(sourceServerData));
+		}
+
+		byte[] GetSourceLinkData() {
+			if (reader is ISymUnmanagedReader4 reader4) {
+				// It returns data that it owns. The data is freed once its Destroy() method is called
+				Debug.Assert(reader is ISymUnmanagedDispose);
+				// Despite its name, it seems to only return source link data, and not source server data
+				if (reader4.GetSourceServerData(out var srcLinkData, out int sizeData) == 0) {
+					if (sizeData == 0)
+						return Array2.Empty<byte>();
+					var data = new byte[sizeData];
+					Marshal.Copy(srcLinkData, data, 0, data.Length);
+					return data;
+				}
+			}
+			return null;
+		}
+
+		byte[] GetSourceServerData() {
+			if (reader is ISymUnmanagedSourceServerModule srcSrvModule) {
+				var srcSrvData = IntPtr.Zero;
+				try {
+					// This method only returns source server data, not source link data
+					if (srcSrvModule.GetSourceServerData(out int sizeData, out srcSrvData) == 0) {
+						if (sizeData == 0)
+							return Array2.Empty<byte>();
+						var data = new byte[sizeData];
+						Marshal.Copy(srcSrvData, data, 0, data.Length);
+						return data;
+					}
+				}
+				finally {
+					if (srcSrvData != IntPtr.Zero)
+						Marshal.FreeCoTaskMem(srcSrvData);
+				}
+			}
+			return null;
+		}
+
+		public override void Dispose() {
+			Dispose(true);
+			GC.SuppressFinalize(this);
+		}
+
+		void Dispose(bool disposing) {
+			(reader as ISymUnmanagedDispose)?.Destroy();
+			var o = objsToKeepAlive;
+			if (o != null) {
+				foreach (var obj in o)
+					(obj as IDisposable)?.Dispose();
+			}
+			module = null;
+			reader = null;
+			objsToKeepAlive = null;
+		}
+
+		public bool MatchesModule(Guid pdbId, uint stamp, uint age) {
+			if (reader is ISymUnmanagedReader4 reader4) {
+				int hr = reader4.MatchesModule(pdbId, stamp, age, out bool result);
+				if (hr < 0)
+					return false;
+				return result;
+			}
+
+			// There seems to be no other method that can verify that we opened the correct PDB, so return true
+			return true;
 		}
 	}
 }

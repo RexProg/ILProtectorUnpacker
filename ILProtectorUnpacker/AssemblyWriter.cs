@@ -25,7 +25,7 @@ namespace ILProtectorUnpacker
             assemblyResolver.DefaultModuleContext = moduleContext;
             moduleDef = ModuleDefMD.Load(assemblyPath, moduleContext);
             moduleDef.Context = moduleContext;
-            moduleDef.Context.AssemblyResolver.AddToCache(moduleDef);
+            ((AssemblyResolver)moduleDef.Context.AssemblyResolver).AddToCache(moduleDef);
         }
 
         internal void WriteMethod(MethodDef methodDef)

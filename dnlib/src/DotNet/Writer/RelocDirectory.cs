@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.IO;
 using dnlib.IO;
 using dnlib.PE;
 
@@ -19,7 +18,7 @@ namespace dnlib.DotNet.Writer {
 		RVA rva;
 		uint totalSize;
 
-		struct RelocInfo {
+		readonly struct RelocInfo {
 			public readonly IChunk Chunk;
 			public readonly uint OffsetOrRva;
 			public RelocInfo(IChunk chunk, uint offset) {
@@ -29,26 +28,18 @@ namespace dnlib.DotNet.Writer {
 		}
 
 		/// <inheritdoc/>
-		public FileOffset FileOffset {
-			get { return offset; }
-		}
+		public FileOffset FileOffset => offset;
 
 		/// <inheritdoc/>
-		public RVA RVA {
-			get { return rva; }
-		}
+		public RVA RVA => rva;
 
-		internal bool NeedsRelocSection {
-			get { return allRelocRvas.Count != 0; }
-		}
+		internal bool NeedsRelocSection => allRelocRvas.Count != 0;
 
 		/// <summary>
 		/// Constructor
 		/// </summary>
 		/// <param name="machine">Machine</param>
-		public RelocDirectory(Machine machine) {
-			this.machine = machine;
-		}
+		public RelocDirectory(Machine machine) => this.machine = machine;
 
 		/// <inheritdoc/>
 		public void SetOffset(FileOffset offset, RVA rva) {
@@ -85,27 +76,23 @@ namespace dnlib.DotNet.Writer {
 		}
 
 		/// <inheritdoc/>
-		public uint GetFileLength() {
-			return totalSize;
-		}
+		public uint GetFileLength() => totalSize;
 
 		/// <inheritdoc/>
-		public uint GetVirtualSize() {
-			return GetFileLength();
-		}
+		public uint GetVirtualSize() => GetFileLength();
 
 		/// <inheritdoc/>
-		public void WriteTo(BinaryWriter writer) {
-			bool is64bit = machine == Machine.AMD64 || machine == Machine.IA64 || machine == Machine.ARM64;
+		public void WriteTo(DataWriter writer) {
+			bool is64bit = machine.Is64Bit();
 			// 3 = IMAGE_REL_BASED_HIGHLOW, A = IMAGE_REL_BASED_DIR64
 			uint relocType = is64bit ? 0xA000U : 0x3000;
 			foreach (var pageList in relocSections) {
-				writer.Write(pageList[0] & ~0xFFFU);
-				writer.Write((uint)(8 + ((pageList.Count + 1) & ~1) * 2));
+				writer.WriteUInt32(pageList[0] & ~0xFFFU);
+				writer.WriteUInt32((uint)(8 + ((pageList.Count + 1) & ~1) * 2));
 				foreach (var rva in pageList)
-					writer.Write((ushort)(relocType | (rva & 0xFFF)));
+					writer.WriteUInt16((ushort)(relocType | (rva & 0xFFF)));
 				if ((pageList.Count & 1) != 0)
-					writer.Write((ushort)0);
+					writer.WriteUInt16(0);
 			}
 		}
 

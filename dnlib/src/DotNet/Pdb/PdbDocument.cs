@@ -1,15 +1,9 @@
 ﻿// dnlib: See LICENSE.txt for more info
 
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using dnlib.DotNet.Pdb.Symbols;
-using dnlib.Threading;
-
-#if THREAD_SAFE
-using ThreadSafe = dnlib.Threading.Collections;
-#else
-using ThreadSafe = System.Collections.Generic;
-#endif
 
 namespace dnlib.DotNet.Pdb {
 	/// <summary>
@@ -48,22 +42,16 @@ namespace dnlib.DotNet.Pdb {
 		public byte[] CheckSum { get; set; }
 
 		/// <inheritdoc/>
-		public int HasCustomDebugInformationTag {
-			get { return 22; }
-		}
+		public int HasCustomDebugInformationTag => 22;
 
 		/// <inheritdoc/>
-		public bool HasCustomDebugInfos {
-			get { return CustomDebugInfos.Count > 0; }
-		}
+		public bool HasCustomDebugInfos => CustomDebugInfos.Count > 0;
 
 		/// <summary>
 		/// Gets all custom debug infos
 		/// </summary>
-		public ThreadSafe.IList<PdbCustomDebugInfo> CustomDebugInfos {
-			get { return customDebugInfos; }
-		}
-		readonly ThreadSafe.IList<PdbCustomDebugInfo> customDebugInfos = ThreadSafeListCreator.Create<PdbCustomDebugInfo>();
+		public IList<PdbCustomDebugInfo> CustomDebugInfos => customDebugInfos;
+		IList<PdbCustomDebugInfo> customDebugInfos;
 
 		/// <summary>
 		/// Default constructor
@@ -75,15 +63,27 @@ namespace dnlib.DotNet.Pdb {
 		/// Constructor
 		/// </summary>
 		/// <param name="symDoc">A <see cref="SymbolDocument"/> instance</param>
-		public PdbDocument(SymbolDocument symDoc) {
+		public PdbDocument(SymbolDocument symDoc) : this(symDoc, partial: false) {
+		}
+
+		PdbDocument(SymbolDocument symDoc, bool partial) {
 			if (symDoc == null)
-				throw new ArgumentNullException("symDoc");
-			this.Url = symDoc.URL;
-			this.Language = symDoc.Language;
-			this.LanguageVendor = symDoc.LanguageVendor;
-			this.DocumentType = symDoc.DocumentType;
-			this.CheckSumAlgorithmId = symDoc.CheckSumAlgorithmId;
-			this.CheckSum = symDoc.CheckSum;
+				throw new ArgumentNullException(nameof(symDoc));
+			Url = symDoc.URL;
+			if (!partial)
+				Initialize(symDoc);
+		}
+
+		internal static PdbDocument CreatePartialForCompare(SymbolDocument symDoc) =>
+			new PdbDocument(symDoc, partial: true);
+
+		internal void Initialize(SymbolDocument symDoc) {
+			Language = symDoc.Language;
+			LanguageVendor = symDoc.LanguageVendor;
+			DocumentType = symDoc.DocumentType;
+			CheckSumAlgorithmId = symDoc.CheckSumAlgorithmId;
+			CheckSum = symDoc.CheckSum;
+			customDebugInfos = new List<PdbCustomDebugInfo>();
 			foreach (var cdi in symDoc.CustomDebugInfos)
 				customDebugInfos.Add(cdi);
 		}
@@ -98,25 +98,23 @@ namespace dnlib.DotNet.Pdb {
 		/// <param name="checkSumAlgorithmId">Checksum algorithm ID. See <see cref="PdbDocumentConstants"/></param>
 		/// <param name="checkSum">Checksum</param>
 		public PdbDocument(string url, Guid language, Guid languageVendor, Guid documentType, Guid checkSumAlgorithmId, byte[] checkSum) {
-			this.Url = url;
-			this.Language = language;
-			this.LanguageVendor = languageVendor;
-			this.DocumentType = documentType;
-			this.CheckSumAlgorithmId = checkSumAlgorithmId;
-			this.CheckSum = checkSum;
+			Url = url;
+			Language = language;
+			LanguageVendor = languageVendor;
+			DocumentType = documentType;
+			CheckSumAlgorithmId = checkSumAlgorithmId;
+			CheckSum = checkSum;
 		}
 
 		/// <inheritdoc/>
-		public override int GetHashCode() {
-			return (Url ?? string.Empty).ToUpperInvariant().GetHashCode();
-		}
+		public override int GetHashCode() => StringComparer.OrdinalIgnoreCase.GetHashCode(Url ?? string.Empty);
 
 		/// <inheritdoc/>
 		public override bool Equals(object obj) {
 			var other = obj as PdbDocument;
 			if (other == null)
 				return false;
-			return (Url ?? string.Empty).Equals(other.Url ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+			return StringComparer.OrdinalIgnoreCase.Equals(Url ?? string.Empty, other.Url ?? string.Empty);
 		}
 	}
 }
