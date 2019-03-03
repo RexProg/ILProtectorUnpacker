@@ -1,25 +1,24 @@
 ﻿// dnlib: See LICENSE.txt for more info
 
 using System.Collections.Generic;
-using System.IO;
 using System.Text;
 using dnlib.DotNet.Writer;
 
 namespace dnlib.DotNet.Pdb.Portable {
 	// https://github.com/dotnet/corefx/blob/master/src/System.Reflection.Metadata/specs/PortablePdb-Metadata.md#imports-blob
-	struct ImportScopeBlobWriter {
+	readonly struct ImportScopeBlobWriter {
 		readonly IWriterError helper;
-		readonly MetaData systemMetaData;
+		readonly Metadata systemMetadata;
 		readonly BlobHeap blobHeap;
 
-		ImportScopeBlobWriter(IWriterError helper, MetaData systemMetaData, BlobHeap blobHeap) {
+		ImportScopeBlobWriter(IWriterError helper, Metadata systemMetadata, BlobHeap blobHeap) {
 			this.helper = helper;
-			this.systemMetaData = systemMetaData;
+			this.systemMetadata = systemMetadata;
 			this.blobHeap = blobHeap;
 		}
 
-		public static void Write(IWriterError helper, MetaData systemMetaData, BinaryWriter writer, BlobHeap blobHeap, IList<PdbImport> imports) {
-			var blobWriter = new ImportScopeBlobWriter(helper, systemMetaData, blobHeap);
+		public static void Write(IWriterError helper, Metadata systemMetadata, DataWriter writer, BlobHeap blobHeap, IList<PdbImport> imports) {
+			var blobWriter = new ImportScopeBlobWriter(helper, systemMetadata, blobHeap);
 			blobWriter.Write(writer, imports);
 		}
 
@@ -32,10 +31,11 @@ namespace dnlib.DotNet.Pdb.Portable {
 			return blobHeap.Add(bytes);
 		}
 
-		void Write(BinaryWriter writer, IList<PdbImport> imports) {
-			foreach (var import in imports) {
-				uint rawKind;
-				if (!ImportDefinitionKindUtils.ToImportDefinitionKind(import.Kind, out rawKind)) {
+		void Write(DataWriter writer, IList<PdbImport> imports) {
+			int count = imports.Count;
+			for (int i = 0; i < count; i++) {
+				var import = imports[i];
+				if (!ImportDefinitionKindUtils.ToImportDefinitionKind(import.Kind, out uint rawKind)) {
 					helper.Error("Unknown import definition kind: " + import.Kind.ToString());
 					return;
 				}
@@ -48,7 +48,7 @@ namespace dnlib.DotNet.Pdb.Portable {
 
 				case PdbImportDefinitionKind.ImportAssemblyNamespace:
 					// <import> ::= ImportAssemblyNamespace <target-assembly> <target-namespace>
-					writer.WriteCompressedUInt32(systemMetaData.GetToken(((PdbImportAssemblyNamespace)import).TargetAssembly).Rid);
+					writer.WriteCompressedUInt32(systemMetadata.GetToken(((PdbImportAssemblyNamespace)import).TargetAssembly).Rid);
 					writer.WriteCompressedUInt32(WriteUTF8(((PdbImportAssemblyNamespace)import).TargetNamespace));
 					break;
 
@@ -71,7 +71,7 @@ namespace dnlib.DotNet.Pdb.Portable {
 				case PdbImportDefinitionKind.AliasAssemblyReference:
 					// <import> ::= AliasAssemblyReference <alias> <target-assembly>
 					writer.WriteCompressedUInt32(WriteUTF8(((PdbAliasAssemblyReference)import).Alias));
-					writer.WriteCompressedUInt32(systemMetaData.GetToken(((PdbAliasAssemblyReference)import).TargetAssembly).Rid);
+					writer.WriteCompressedUInt32(systemMetadata.GetToken(((PdbAliasAssemblyReference)import).TargetAssembly).Rid);
 					break;
 
 				case PdbImportDefinitionKind.AliasNamespace:
@@ -83,7 +83,7 @@ namespace dnlib.DotNet.Pdb.Portable {
 				case PdbImportDefinitionKind.AliasAssemblyNamespace:
 					// <import> ::= AliasAssemblyNamespace <alias> <target-assembly> <target-namespace>
 					writer.WriteCompressedUInt32(WriteUTF8(((PdbAliasAssemblyNamespace)import).Alias));
-					writer.WriteCompressedUInt32(systemMetaData.GetToken(((PdbAliasAssemblyNamespace)import).TargetAssembly).Rid);
+					writer.WriteCompressedUInt32(systemMetadata.GetToken(((PdbAliasAssemblyNamespace)import).TargetAssembly).Rid);
 					writer.WriteCompressedUInt32(WriteUTF8(((PdbAliasAssemblyNamespace)import).TargetNamespace));
 					break;
 
@@ -105,11 +105,10 @@ namespace dnlib.DotNet.Pdb.Portable {
 				helper.Error("ITypeDefOrRef is null");
 				return 0;
 			}
-			var token = systemMetaData.GetToken(tdr);
-			uint codedToken;
-			if (MD.CodedToken.TypeDefOrRef.Encode(token, out codedToken))
+			var token = systemMetadata.GetToken(tdr);
+			if (MD.CodedToken.TypeDefOrRef.Encode(token, out uint codedToken))
 				return codedToken;
-			helper.Error(string.Format("Could not encode token 0x{0:X8}", token.Raw));
+			helper.Error($"Could not encode token 0x{token.Raw:X8}");
 			return 0;
 		}
 	}

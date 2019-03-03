@@ -1,35 +1,31 @@
 ﻿// dnlib: See LICENSE.txt for more info
 
+using System;
 using dnlib.DotNet.Pdb.Symbols;
 using dnlib.IO;
 
 namespace dnlib.DotNet.Pdb.Managed {
 	sealed class DbiVariable : SymbolVariable {
-		public override string Name {
-			get { return name; }
-		}
+		public override string Name => name;
 		string name;
 
-		public override PdbLocalAttributes Attributes {
-			get { return attributes; }
-		}
+		public override PdbLocalAttributes Attributes => attributes;
 		PdbLocalAttributes attributes;
 
-		public override int Index {
-			get { return index; }
-		}
+		public override int Index => index;
 		int index;
 
-		public override PdbCustomDebugInfo[] CustomDebugInfos {
-			get { return emptyPdbCustomDebugInfos; }
-		}
-		static readonly PdbCustomDebugInfo[] emptyPdbCustomDebugInfos = new PdbCustomDebugInfo[0];
+		public override PdbCustomDebugInfo[] CustomDebugInfos => Array2.Empty<PdbCustomDebugInfo>();
 
-		public void Read(IImageStream stream) {
-			index = stream.ReadInt32();
-			stream.Position += 10;
-			attributes = GetAttributes(stream.ReadUInt16());
-			name = PdbReader.ReadCString(stream);
+		public bool Read(ref DataReader reader) {
+			index = reader.ReadInt32();
+			reader.Position += 10;
+			ushort flags = reader.ReadUInt16();
+			attributes = GetAttributes(flags);
+			name = PdbReader.ReadCString(ref reader);
+
+			const int fIsParam = 1;
+			return (flags & fIsParam) == 0;
 		}
 
 		static PdbLocalAttributes GetAttributes(uint flags) {

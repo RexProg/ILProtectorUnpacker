@@ -1,8 +1,7 @@
 // dnlib: See LICENSE.txt for more info
 
-﻿using System;
+using System;
 using System.Collections.Generic;
-using System.IO;
 
 namespace dnlib.DotNet.Writer {
 	/// <summary>
@@ -13,9 +12,7 @@ namespace dnlib.DotNet.Writer {
 		Dictionary<uint, byte[]> userRawData;
 
 		/// <inheritdoc/>
-		public override string Name {
-			get { return "#GUID"; }
-		}
+		public override string Name => "#GUID";
 
 		/// <summary>
 		/// Adds a guid to the #GUID heap
@@ -28,8 +25,7 @@ namespace dnlib.DotNet.Writer {
 			if (guid == null)
 				return 0;
 
-			uint index;
-			if (guids.TryGetValue(guid.Value, out index))
+			if (guids.TryGetValue(guid.Value, out uint index))
 				return index;
 
 			index = (uint)guids.Count + 1;
@@ -38,26 +34,21 @@ namespace dnlib.DotNet.Writer {
 		}
 
 		/// <inheritdoc/>
-		public override uint GetRawLength() {
-			return (uint)guids.Count * 16;
-		}
+		public override uint GetRawLength() => (uint)guids.Count * 16;
 
 		/// <inheritdoc/>
-		protected override void WriteToImpl(BinaryWriter writer) {
+		protected override void WriteToImpl(DataWriter writer) {
 			uint offset = 0;
 			foreach (var kv in guids) {
-				byte[] rawData;
-				if (userRawData == null || !userRawData.TryGetValue(offset, out rawData))
+				if (userRawData == null || !userRawData.TryGetValue(offset, out var rawData))
 					rawData = kv.Key.ToByteArray();
-				writer.Write(rawData);
+				writer.WriteBytes(rawData);
 				offset += 16;
 			}
 		}
 
 		/// <inheritdoc/>
-		public int GetRawDataSize(Guid data) {
-			return 16;
-		}
+		public int GetRawDataSize(Guid data) => 16;
 
 		/// <inheritdoc/>
 		public void SetRawData(uint offset, byte[] rawData) {

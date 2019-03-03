@@ -8,9 +8,7 @@ using dnlib.IO;
 
 namespace dnlib.DotNet.Pdb.Managed {
 	sealed class DbiFunction : SymbolMethod {
-		public override int Token {
-			get { return token; }
-		}
+		public override int Token => token;
 		internal int token;
 
 		internal PdbReader reader;
@@ -19,25 +17,25 @@ namespace dnlib.DotNet.Pdb.Managed {
 		public PdbAddress Address { get; private set; }
 		public DbiScope Root { get; private set; }
 		public List<SymbolSequencePoint> Lines {
-			get { return lines; }
-			set { lines = value; }
+			get => lines;
+			set => lines = value;
 		}
 		List<SymbolSequencePoint> lines;
 
-		public void Read(IImageStream stream, long recEnd) {
-			stream.Position += 4;
-			var end = stream.ReadUInt32();
-			stream.Position += 4;
-			var len = stream.ReadUInt32();
-			stream.Position += 8;
-			token = stream.ReadInt32();
-			Address = PdbAddress.ReadAddress(stream);
-			stream.Position += 1 + 2;
-			Name = PdbReader.ReadCString(stream);
+		public void Read(ref DataReader reader, uint recEnd) {
+			reader.Position += 4;
+			var end = reader.ReadUInt32();
+			reader.Position += 4;
+			var len = reader.ReadUInt32();
+			reader.Position += 8;
+			token = reader.ReadInt32();
+			Address = PdbAddress.ReadAddress(ref reader);
+			reader.Position += 1 + 2;
+			Name = PdbReader.ReadCString(ref reader);
 
-			stream.Position = recEnd;
+			reader.Position = recEnd;
 			Root = new DbiScope(this, null, "", Address.Offset, len);
-			Root.Read(new RecursionCounter(), stream, end);
+			Root.Read(new RecursionCounter(), ref reader, end);
 			FixOffsets(new RecursionCounter(), Root);
 		}
 
@@ -47,31 +45,30 @@ namespace dnlib.DotNet.Pdb.Managed {
 
 			scope.startOffset -= (int)Address.Offset;
 			scope.endOffset -= (int)Address.Offset;
-			foreach (var child in scope.Children)
-				FixOffsets(counter, (DbiScope)child);
+			var children = scope.Children;
+			int count = children.Count;
+			for (int i = 0; i < count; i++)
+				FixOffsets(counter, (DbiScope)children[i]);
 
 			counter.Decrement();
 		}
 
-		public override SymbolScope RootScope {
-			get { return Root; }
-		}
+		public override SymbolScope RootScope => Root;
 
 		public override IList<SymbolSequencePoint> SequencePoints {
 			get {
 				var l = lines;
 				if (l == null)
-					return emptySymbolSequencePoints;
+					return Array2.Empty<SymbolSequencePoint>();
 				return l;
 			}
 		}
-		static readonly SymbolSequencePoint[] emptySymbolSequencePoints = new SymbolSequencePoint[0];
 
 		const string asyncMethodInfoAttributeName = "asyncMethodInfo";
 		public int AsyncKickoffMethod {
 			get {
 				var data = Root.GetSymAttribute(asyncMethodInfoAttributeName);
-				if (data == null)
+				if (data == null || data.Length < 4)
 					return 0;
 				return BitConverter.ToInt32(data, 0);
 			}
@@ -80,7 +77,7 @@ namespace dnlib.DotNet.Pdb.Managed {
 		public uint? AsyncCatchHandlerILOffset {
 			get {
 				var data = Root.GetSymAttribute(asyncMethodInfoAttributeName);
-				if (data == null)
+				if (data == null || data.Length < 8)
 					return null;
 				uint token = BitConverter.ToUInt32(data, 4);
 				return token == uint.MaxValue ? (uint?)null : token;
@@ -98,15 +95,15 @@ namespace dnlib.DotNet.Pdb.Managed {
 
 		SymbolAsyncStepInfo[] CreateSymbolAsyncStepInfos() {
 			var data = Root.GetSymAttribute(asyncMethodInfoAttributeName);
-			if (data == null)
-				return emptySymbolAsyncStepInfos;
+			if (data == null || data.Length < 12)
+				return Array2.Empty<SymbolAsyncStepInfo>();
 			int pos = 8;
 			int count = BitConverter.ToInt32(data, pos);
 			pos += 4;
 			if (pos + (long)count * 12 > data.Length)
-				return emptySymbolAsyncStepInfos;
+				return Array2.Empty<SymbolAsyncStepInfo>();
 			if (count == 0)
-				return emptySymbolAsyncStepInfos;
+				return Array2.Empty<SymbolAsyncStepInfo>();
 			var res = new SymbolAsyncStepInfo[count];
 			for (int i = 0; i < res.Length; i++) {
 				res[i] = new SymbolAsyncStepInfo(BitConverter.ToUInt32(data, pos), BitConverter.ToUInt32(data, pos + 8), BitConverter.ToUInt32(data, pos + 4));
@@ -114,10 +111,8 @@ namespace dnlib.DotNet.Pdb.Managed {
 			}
 			return res;
 		}
-		static readonly SymbolAsyncStepInfo[] emptySymbolAsyncStepInfos = new SymbolAsyncStepInfo[0];
 
-		public override void GetCustomDebugInfos(MethodDef method, CilBody body, IList<PdbCustomDebugInfo> result) {
+		public override void GetCustomDebugInfos(MethodDef method, CilBody body, IList<PdbCustomDebugInfo> result) =>
 			reader.GetCustomDebugInfos(this, method, body, result);
-		}
 	}
 }

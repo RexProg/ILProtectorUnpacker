@@ -1,32 +1,31 @@
 ﻿// dnlib: See LICENSE.txt for more info
 
 using System;
-using System.IO;
 using System.Text;
 using dnlib.DotNet.Writer;
 
 namespace dnlib.DotNet.Pdb.Portable {
-	struct LocalConstantSigBlobWriter {
+	readonly struct LocalConstantSigBlobWriter {
 		readonly IWriterError helper;
-		readonly MetaData systemMetaData;
+		readonly Metadata systemMetadata;
 
-		LocalConstantSigBlobWriter(IWriterError helper, MetaData systemMetaData) {
+		LocalConstantSigBlobWriter(IWriterError helper, Metadata systemMetadata) {
 			this.helper = helper;
-			this.systemMetaData = systemMetaData;
+			this.systemMetadata = systemMetadata;
 		}
 
-		public static void Write(IWriterError helper, MetaData systemMetaData, BinaryWriter writer, TypeSig type, object value) {
-			var sigWriter = new LocalConstantSigBlobWriter(helper, systemMetaData);
+		public static void Write(IWriterError helper, Metadata systemMetadata, DataWriter writer, TypeSig type, object value) {
+			var sigWriter = new LocalConstantSigBlobWriter(helper, systemMetadata);
 			sigWriter.Write(writer, type, value);
 		}
 
-		void Write(BinaryWriter writer, TypeSig type, object value) {
+		void Write(DataWriter writer, TypeSig type, object value) {
 			for (; ; type = type.Next) {
 				if (type == null)
 					return;
 
 				var et = type.ElementType;
-				writer.Write((byte)et);
+				writer.WriteByte((byte)et);
 				switch (et) {
 				case ElementType.Boolean:
 				case ElementType.Char:
@@ -43,27 +42,27 @@ namespace dnlib.DotNet.Pdb.Portable {
 
 				case ElementType.R4:
 					if (value is float)
-						writer.Write((float)value);
+						writer.WriteSingle((float)value);
 					else {
 						helper.Error("Expected a Single constant");
-						writer.Write((float)0);
+						writer.WriteSingle(0);
 					}
 					return;
 
 				case ElementType.R8:
 					if (value is double)
-						writer.Write((double)value);
+						writer.WriteDouble((double)value);
 					else {
 						helper.Error("Expected a Double constant");
-						writer.Write((double)0);
+						writer.WriteDouble(0);
 					}
 					return;
 
 				case ElementType.String:
 					if (value == null)
-						writer.Write((byte)0xFF);
+						writer.WriteByte((byte)0xFF);
 					else if (value is string)
-						writer.Write(Encoding.Unicode.GetBytes((string)value));
+						writer.WriteBytes(Encoding.Unicode.GetBytes((string)value));
 					else
 						helper.Error("Expected a String constant");
 					return;
@@ -80,7 +79,7 @@ namespace dnlib.DotNet.Pdb.Portable {
 					var tdr = ((ValueTypeSig)type).TypeDefOrRef;
 					var td = tdr.ResolveTypeDef();
 					if (td == null)
-						helper.Error(string.Format("Couldn't resolve type 0x{0:X8}", tdr == null ? 0 : tdr.MDToken.Raw));
+						helper.Error($"Couldn't resolve type 0x{tdr?.MDToken.Raw ?? 0:X8}");
 					else if (td.IsEnum) {
 						var underlyingType = td.GetEnumUnderlyingType().RemovePinnedAndModifiers();
 						switch (underlyingType.GetElementType()) {
@@ -94,8 +93,8 @@ namespace dnlib.DotNet.Pdb.Portable {
 						case ElementType.U4:
 						case ElementType.I8:
 						case ElementType.U8:
-							writer.BaseStream.Position--;
-							writer.Write((byte)underlyingType.GetElementType());
+							writer.Position--;
+							writer.WriteByte((byte)underlyingType.GetElementType());
 							WritePrimitiveValue(writer, underlyingType.GetElementType(), value);
 							WriteTypeDefOrRef(writer, tdr);
 							return;
@@ -106,36 +105,35 @@ namespace dnlib.DotNet.Pdb.Portable {
 					}
 					else {
 						WriteTypeDefOrRef(writer, tdr);
-						UTF8String ns, name;
 						bool valueWritten = false;
-						if (GetName(tdr, out ns, out name) && ns == stringSystem && tdr.DefinitionAssembly.IsCorLib()) {
+						if (GetName(tdr, out var ns, out var name) && ns == stringSystem && tdr.DefinitionAssembly.IsCorLib()) {
 							if (name == stringDecimal) {
 								if (value is decimal) {
 									var bits = decimal.GetBits((decimal)value);
-									writer.Write((byte)((((uint)bits[3] >> 31) << 7) | (((uint)bits[3] >> 16) & 0x7F)));
-									writer.Write(bits[0]);
-									writer.Write(bits[1]);
-									writer.Write(bits[2]);
+									writer.WriteByte((byte)((((uint)bits[3] >> 31) << 7) | (((uint)bits[3] >> 16) & 0x7F)));
+									writer.WriteInt32(bits[0]);
+									writer.WriteInt32(bits[1]);
+									writer.WriteInt32(bits[2]);
 								}
 								else {
 									helper.Error("Expected a Decimal constant");
-									writer.Write(new byte[13]);
+									writer.WriteBytes(new byte[13]);
 								}
 								valueWritten = true;
 							}
 							else if (name == stringDateTime) {
 								if (value is DateTime)
-									writer.Write(((DateTime)value).Ticks);
+									writer.WriteInt64(((DateTime)value).Ticks);
 								else {
 									helper.Error("Expected a DateTime constant");
-									writer.Write(0L);
+									writer.WriteInt64(0);
 								}
 								valueWritten = true;
 							}
 						}
 						if (!valueWritten) {
 							if (value is byte[])
-								writer.Write((byte[])value);
+								writer.WriteBytes((byte[])value);
 							else if (value != null) {
 								helper.Error("Unsupported constant: " + value.GetType().FullName);
 								return;
@@ -147,7 +145,7 @@ namespace dnlib.DotNet.Pdb.Portable {
 				case ElementType.Class:
 					WriteTypeDefOrRef(writer, ((ClassSig)type).TypeDefOrRef);
 					if (value is byte[])
-						writer.Write((byte[])value);
+						writer.WriteBytes((byte[])value);
 					else if (value != null)
 						helper.Error("Expected a null constant");
 					return;
@@ -188,15 +186,13 @@ namespace dnlib.DotNet.Pdb.Portable {
 		static readonly UTF8String stringDateTime = new UTF8String("DateTime");
 
 		static bool GetName(ITypeDefOrRef tdr, out UTF8String @namespace, out UTF8String name) {
-			var tr = tdr as TypeRef;
-			if (tr != null) {
+			if (tdr is TypeRef tr) {
 				@namespace = tr.Namespace;
 				name = tr.Name;
 				return true;
 			}
 
-			var td = tdr as TypeDef;
-			if (td != null) {
+			if (tdr is TypeDef td) {
 				@namespace = td.Namespace;
 				name = td.Name;
 				return true;
@@ -207,95 +203,95 @@ namespace dnlib.DotNet.Pdb.Portable {
 			return false;
 		}
 
-		void WritePrimitiveValue(BinaryWriter writer, ElementType et, object value) {
+		void WritePrimitiveValue(DataWriter writer, ElementType et, object value) {
 			switch (et) {
 			case ElementType.Boolean:
 				if (value is bool)
-					writer.Write((bool)value);
+					writer.WriteBoolean((bool)value);
 				else {
 					helper.Error("Expected a Boolean constant");
-					writer.Write(false);
+					writer.WriteBoolean(false);
 				}
 				break;
 
 			case ElementType.Char:
 				if (value is char)
-					writer.Write((ushort)(char)value);
+					writer.WriteUInt16((char)value);
 				else {
 					helper.Error("Expected a Char constant");
-					writer.Write((ushort)0);
+					writer.WriteUInt16(0);
 				}
 				break;
 
 			case ElementType.I1:
 				if (value is sbyte)
-					writer.Write((sbyte)value);
+					writer.WriteSByte((sbyte)value);
 				else {
 					helper.Error("Expected a SByte constant");
-					writer.Write((sbyte)0);
+					writer.WriteSByte(0);
 				}
 				break;
 
 			case ElementType.U1:
 				if (value is byte)
-					writer.Write((byte)value);
+					writer.WriteByte((byte)value);
 				else {
 					helper.Error("Expected a Byte constant");
-					writer.Write((byte)0);
+					writer.WriteByte(0);
 				}
 				break;
 
 			case ElementType.I2:
 				if (value is short)
-					writer.Write((short)value);
+					writer.WriteInt16((short)value);
 				else {
 					helper.Error("Expected an Int16 constant");
-					writer.Write((short)0);
+					writer.WriteInt16(0);
 				}
 				break;
 
 			case ElementType.U2:
 				if (value is ushort)
-					writer.Write((ushort)value);
+					writer.WriteUInt16((ushort)value);
 				else {
 					helper.Error("Expected a UInt16 constant");
-					writer.Write((ushort)0);
+					writer.WriteUInt16(0);
 				}
 				break;
 
 			case ElementType.I4:
 				if (value is int)
-					writer.Write((int)value);
+					writer.WriteInt32((int)value);
 				else {
 					helper.Error("Expected an Int32 constant");
-					writer.Write((int)0);
+					writer.WriteInt32(0);
 				}
 				break;
 
 			case ElementType.U4:
 				if (value is uint)
-					writer.Write((uint)value);
+					writer.WriteUInt32((uint)value);
 				else {
 					helper.Error("Expected a UInt32 constant");
-					writer.Write((uint)0);
+					writer.WriteUInt32(0);
 				}
 				break;
 
 			case ElementType.I8:
 				if (value is long)
-					writer.Write((long)value);
+					writer.WriteInt64((long)value);
 				else {
 					helper.Error("Expected an Int64 constant");
-					writer.Write((long)0);
+					writer.WriteInt64(0);
 				}
 				break;
 
 			case ElementType.U8:
 				if (value is ulong)
-					writer.Write((ulong)value);
+					writer.WriteUInt64((ulong)value);
 				else {
 					helper.Error("Expected a UInt64 constant");
-					writer.Write((ulong)0);
+					writer.WriteUInt64(0);
 				}
 				break;
 
@@ -304,9 +300,8 @@ namespace dnlib.DotNet.Pdb.Portable {
 			}
 		}
 
-		void WriteTypeDefOrRef(BinaryWriter writer, ITypeDefOrRef tdr) {
-			uint codedToken;
-			if (!MD.CodedToken.TypeDefOrRef.Encode(systemMetaData.GetToken(tdr), out codedToken)) {
+		void WriteTypeDefOrRef(DataWriter writer, ITypeDefOrRef tdr) {
+			if (!MD.CodedToken.TypeDefOrRef.Encode(systemMetadata.GetToken(tdr), out uint codedToken)) {
 				helper.Error("Couldn't encode a TypeDefOrRef");
 				return;
 			}

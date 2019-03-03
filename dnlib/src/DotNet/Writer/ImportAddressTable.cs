@@ -1,6 +1,5 @@
 // dnlib: See LICENSE.txt for more info
 
-﻿using System.IO;
 using dnlib.IO;
 using dnlib.PE;
 
@@ -19,14 +18,10 @@ namespace dnlib.DotNet.Writer {
 		public ImportDirectory ImportDirectory { get; set; }
 
 		/// <inheritdoc/>
-		public FileOffset FileOffset {
-			get { return offset; }
-		}
+		public FileOffset FileOffset => offset;
 
 		/// <inheritdoc/>
-		public RVA RVA {
-			get { return rva; }
-		}
+		public RVA RVA => rva;
 
 		internal bool Enable { get; set; }
 
@@ -34,9 +29,7 @@ namespace dnlib.DotNet.Writer {
 		/// Constructor
 		/// </summary>
 		/// <param name="is64bit">true if it's a 64-bit PE file, false if it's a 32-bit PE file</param>
-		public ImportAddressTable(bool is64bit) {
-			this.is64bit = is64bit;
-		}
+		public ImportAddressTable(bool is64bit) => this.is64bit = is64bit;
 
 		/// <inheritdoc/>
 		public void SetOffset(FileOffset offset, RVA rva) {
@@ -52,21 +45,19 @@ namespace dnlib.DotNet.Writer {
 		}
 
 		/// <inheritdoc/>
-		public uint GetVirtualSize() {
-			return GetFileLength();
-		}
+		public uint GetVirtualSize() => GetFileLength();
 
 		/// <inheritdoc/>
-		public void WriteTo(BinaryWriter writer) {
+		public void WriteTo(DataWriter writer) {
 			if (!Enable)
 				return;
 			if (is64bit) {
-				writer.Write((ulong)(uint)ImportDirectory.CorXxxMainRVA);
-				writer.Write(0UL);
+				writer.WriteUInt64((ulong)(uint)ImportDirectory.CorXxxMainRVA);
+				writer.WriteUInt64(0);
 			}
 			else {
-				writer.Write((uint)ImportDirectory.CorXxxMainRVA);
-				writer.Write(0);
+				writer.WriteUInt32((uint)ImportDirectory.CorXxxMainRVA);
+				writer.WriteInt32(0);
 			}
 		}
 	}

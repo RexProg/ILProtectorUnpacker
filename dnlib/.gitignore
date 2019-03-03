@@ -1,11 +1,3 @@
-*~
-*/obj/
-*.csproj.user
-*.sdf
-*.opensdf
-*.suo
-/.vs/
-/Debug/
-/Release/
-/Examples/bin/
-*.tmp_proj
+.vs/
+bin/
+obj/

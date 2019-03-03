@@ -31,12 +31,17 @@ namespace dnlib.PE {
 		/// <summary>
 		/// It's a deterministic (reproducible) PE file
 		/// </summary>
-		Repro = 16,
+		Reproducible = 16,
 
 		/// <summary>
 		/// Embedded portable PDB data
 		/// </summary>
 		EmbeddedPortablePdb = 17,
+
+		/// <summary>
+		/// Checksum of the PDB file. 0 or more entries allowed.
+		/// </summary>
+		PdbChecksum = 19,
 #pragma warning restore 1591 // Missing XML comment for publicly visible type or member
 	}
 }

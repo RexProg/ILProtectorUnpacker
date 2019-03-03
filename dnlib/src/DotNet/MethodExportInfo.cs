@@ -1,5 +1,6 @@
 ﻿// dnlib: See LICENSE.txt for more info
 
+using System;
 using System.Diagnostics;
 
 namespace dnlib.DotNet {
@@ -18,8 +19,8 @@ namespace dnlib.DotNet {
 		/// Gets the ordinal or null
 		/// </summary>
 		public ushort? Ordinal {
-			get { return ordinal; }
-			set { ordinal = value; }
+			get => ordinal;
+			set => ordinal = value;
 		}
 
 		/// <summary>
@@ -27,24 +28,22 @@ namespace dnlib.DotNet {
 		/// (<see cref="MethodDef.Name"/>) is used as the exported name.
 		/// </summary>
 		public string Name {
-			get { return name; }
-			set { name = value; }
+			get => name;
+			set => name = value;
 		}
 
 		/// <summary>
 		/// Gets the options
 		/// </summary>
 		public MethodExportInfoOptions Options {
-			get { return options; }
-			set { options = value; }
+			get => options;
+			set => options = value;
 		}
 
 		/// <summary>
 		/// Constructor
 		/// </summary>
-		public MethodExportInfo() {
-			options = DefaultOptions;
-		}
+		public MethodExportInfo() => options = DefaultOptions;
 
 		/// <summary>
 		/// Constructor
@@ -91,6 +90,7 @@ namespace dnlib.DotNet {
 	/// <summary>
 	/// Exported method options
 	/// </summary>
+	[Flags]
 	public enum MethodExportInfoOptions {
 		/// <summary>
 		/// No bit is set

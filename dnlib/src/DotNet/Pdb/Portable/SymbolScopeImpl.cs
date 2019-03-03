@@ -33,38 +33,14 @@ namespace dnlib.DotNet.Pdb.Portable {
 			}
 		}
 
-		public override SymbolScope Parent {
-			get { return parent; }
-		}
-
-		public override int StartOffset {
-			get { return startOffset; }
-		}
-
-		public override int EndOffset {
-			get { return endOffset; }
-		}
-
-		public override IList<SymbolScope> Children {
-			get { return childrenList; }
-		}
-
-		public override IList<SymbolVariable> Locals {
-			get { return localsList; }
-		}
-
-		public override IList<SymbolNamespace> Namespaces {
-			get { return emptySymbolNamespaces; }
-		}
-		static readonly SymbolNamespace[] emptySymbolNamespaces = new SymbolNamespace[0];
-
-		public override IList<PdbCustomDebugInfo> CustomDebugInfos {
-			get { return customDebugInfos; }
-		}
-
-		public override PdbImportScope ImportScope {
-			get { return importScope; }
-		}
+		public override SymbolScope Parent => parent;
+		public override int StartOffset => startOffset;
+		public override int EndOffset => endOffset;
+		public override IList<SymbolScope> Children => childrenList;
+		public override IList<SymbolVariable> Locals => localsList;
+		public override IList<SymbolNamespace> Namespaces => Array2.Empty<SymbolNamespace>();
+		public override IList<PdbCustomDebugInfo> CustomDebugInfos => customDebugInfos;
+		public override PdbImportScope ImportScope => importScope;
 
 		public SymbolScopeImpl(PortablePdbReader owner, SymbolScopeImpl parent, int startOffset, int endOffset, PdbCustomDebugInfo[] customDebugInfos) {
 			this.owner = owner;
@@ -77,47 +53,43 @@ namespace dnlib.DotNet.Pdb.Portable {
 			this.customDebugInfos = customDebugInfos;
 		}
 
-		IMetaData constantsMetaData;
+		Metadata constantsMetadata;
 		uint constantList;
 		uint constantListEnd;
 
-		internal void SetConstants(IMetaData metaData, uint constantList, uint constantListEnd) {
-			constantsMetaData = metaData;
+		internal void SetConstants(Metadata metadata, uint constantList, uint constantListEnd) {
+			constantsMetadata = metadata;
 			this.constantList = constantList;
 			this.constantListEnd = constantListEnd;
 		}
 
 		public override IList<PdbConstant> GetConstants(ModuleDef module, GenericParamContext gpContext) {
 			if (constantList >= constantListEnd)
-				return emptyPdbConstants;
-			Debug.Assert(constantsMetaData != null);
+				return Array2.Empty<PdbConstant>();
+			Debug.Assert(constantsMetadata != null);
 
 			var res = new PdbConstant[constantListEnd - constantList];
 			int w = 0;
 			for (int i = 0; i < res.Length; i++) {
 				uint rid = constantList + (uint)i;
-				uint nameOffset;
-				uint signature = constantsMetaData.TablesStream.ReadLocalConstantRow2(rid, out nameOffset);
-				var name = constantsMetaData.StringsStream.Read(nameOffset);
-				using (var stream = constantsMetaData.BlobStream.CreateStream(signature)) {
-					var localConstantSigBlobReader = new LocalConstantSigBlobReader(module, stream, gpContext);
-					TypeSig type;
-					object value;
-					bool b = localConstantSigBlobReader.Read(out type, out value);
-					Debug.Assert(b);
-					if (b) {
-						var pdbConstant = new PdbConstant(name, type, value);
-						int token = new MDToken(Table.LocalConstant, rid).ToInt32();
-						owner.GetCustomDebugInfos(token, gpContext, pdbConstant.CustomDebugInfos);
-						res[w++] = pdbConstant;
-					}
-					Debug.Assert(stream.Position == stream.Length);
+				bool b = constantsMetadata.TablesStream.TryReadLocalConstantRow(rid, out var row);
+				Debug.Assert(b);
+				var name = constantsMetadata.StringsStream.Read(row.Name);
+				if (!constantsMetadata.BlobStream.TryCreateReader(row.Signature, out var reader))
+					continue;
+				var localConstantSigBlobReader = new LocalConstantSigBlobReader(module, ref reader, gpContext);
+				b = localConstantSigBlobReader.Read(out var type, out object value);
+				Debug.Assert(b);
+				if (b) {
+					var pdbConstant = new PdbConstant(name, type, value);
+					int token = new MDToken(Table.LocalConstant, rid).ToInt32();
+					owner.GetCustomDebugInfos(token, gpContext, pdbConstant.CustomDebugInfos);
+					res[w++] = pdbConstant;
 				}
 			}
 			if (res.Length != w)
 				Array.Resize(ref res, w);
 			return res;
 		}
-		static readonly PdbConstant[] emptyPdbConstants = new PdbConstant[0];
 	}
 }

@@ -9,24 +9,24 @@ namespace dnlib.DotNet.Pdb.Portable {
 	interface IPortablePdbCustomDebugInfoWriterHelper : IWriterError {
 	}
 
-	struct PortablePdbCustomDebugInfoWriter {
+	readonly struct PortablePdbCustomDebugInfoWriter {
 		readonly IPortablePdbCustomDebugInfoWriterHelper helper;
 		readonly SerializerMethodContext methodContext;
-		readonly MetaData systemMetaData;
+		readonly Metadata systemMetadata;
 		readonly MemoryStream outStream;
-		readonly BinaryWriter writer;
+		readonly DataWriter writer;
 
-		public static byte[] Write(IPortablePdbCustomDebugInfoWriterHelper helper, SerializerMethodContext methodContext, MetaData systemMetaData, PdbCustomDebugInfo cdi, BinaryWriterContext context) {
-			var writer = new PortablePdbCustomDebugInfoWriter(helper, methodContext, systemMetaData, context);
+		public static byte[] Write(IPortablePdbCustomDebugInfoWriterHelper helper, SerializerMethodContext methodContext, Metadata systemMetadata, PdbCustomDebugInfo cdi, DataWriterContext context) {
+			var writer = new PortablePdbCustomDebugInfoWriter(helper, methodContext, systemMetadata, context);
 			return writer.Write(cdi);
 		}
 
-		PortablePdbCustomDebugInfoWriter(IPortablePdbCustomDebugInfoWriterHelper helper, SerializerMethodContext methodContext, MetaData systemMetaData, BinaryWriterContext context) {
+		PortablePdbCustomDebugInfoWriter(IPortablePdbCustomDebugInfoWriterHelper helper, SerializerMethodContext methodContext, Metadata systemMetadata, DataWriterContext context) {
 			this.helper = helper;
 			this.methodContext = methodContext;
-			this.systemMetaData = systemMetaData;
-			this.outStream = context.OutStream;
-			this.writer = context.Writer;
+			this.systemMetadata = systemMetadata;
+			outStream = context.OutStream;
+			writer = context.Writer;
 			outStream.SetLength(0);
 			outStream.Position = 0;
 		}
@@ -40,6 +40,7 @@ namespace dnlib.DotNet.Pdb.Portable {
 			case PdbCustomDebugInfoKind.DynamicLocals:
 			case PdbCustomDebugInfoKind.TupleElementNames:
 			case PdbCustomDebugInfoKind.IteratorMethod:
+			case PdbCustomDebugInfoKind.SourceServer:
 			default:
 				helper.Error("Unreachable code, caller should filter these out");
 				return null;
@@ -89,8 +90,8 @@ namespace dnlib.DotNet.Pdb.Portable {
 
 		void WriteUTF8Z(string s) {
 			var bytes = Encoding.UTF8.GetBytes(s);
-			writer.Write(bytes);
-			writer.Write((byte)0);
+			writer.WriteBytes(bytes);
+			writer.WriteByte(0);
 		}
 
 		void WriteStateMachineHoistedLocalScopes(PdbStateMachineHoistedLocalScopesCustomDebugInfo cdi) {
@@ -98,7 +99,10 @@ namespace dnlib.DotNet.Pdb.Portable {
 				helper.Error("Method has no body, can't write custom debug info: " + cdi.Kind);
 				return;
 			}
-			foreach (var scope in cdi.Scopes) {
+			var cdiScopes = cdi.Scopes;
+			int count = cdiScopes.Count;
+			for (int i = 0; i < count; i++) {
+				var scope = cdiScopes[i];
 				uint startOffset, endOffset;
 				if (scope.IsSynthesizedLocal) {
 					startOffset = 0;
@@ -117,8 +121,8 @@ namespace dnlib.DotNet.Pdb.Portable {
 					helper.Error("End instruction is before start instruction");
 					return;
 				}
-				writer.Write(startOffset);
-				writer.Write(endOffset - startOffset);
+				writer.WriteUInt32(startOffset);
+				writer.WriteUInt32(endOffset - startOffset);
 			}
 		}
 
@@ -128,7 +132,7 @@ namespace dnlib.DotNet.Pdb.Portable {
 				helper.Error("Data blob is null");
 				return;
 			}
-			writer.Write(d);
+			writer.WriteBytes(d);
 		}
 
 		void WriteEditAndContinueLambdaMap(PdbEditAndContinueLambdaMapCustomDebugInfo cdi) {
@@ -137,7 +141,7 @@ namespace dnlib.DotNet.Pdb.Portable {
 				helper.Error("Data blob is null");
 				return;
 			}
-			writer.Write(d);
+			writer.WriteBytes(d);
 		}
 
 		void WriteUnknown(PdbUnknownCustomDebugInfo cdi) {
@@ -146,11 +150,14 @@ namespace dnlib.DotNet.Pdb.Portable {
 				helper.Error("Data blob is null");
 				return;
 			}
-			writer.Write(d);
+			writer.WriteBytes(d);
 		}
 
 		void WriteTupleElementNames(PortablePdbTupleElementNamesCustomDebugInfo cdi) {
-			foreach (var name in cdi.Names) {
+			var cdiNames = cdi.Names;
+			int count = cdiNames.Count;
+			for (int i = 0; i < count; i++) {
+				var name = cdiNames[i];
 				if (name == null) {
 					helper.Error("Tuple name is null");
 					return;
@@ -166,13 +173,13 @@ namespace dnlib.DotNet.Pdb.Portable {
 				return;
 			}
 			var bytes = Encoding.UTF8.GetBytes(ns);
-			writer.Write(bytes);
+			writer.WriteBytes(bytes);
 		}
 
 		void WriteDynamicLocalVariables(PdbDynamicLocalVariablesCustomDebugInfo cdi) {
 			var flags = cdi.Flags;
 			for (int i = 0; i < flags.Length; i += 8)
-				writer.Write(ToByte(flags, i));
+				writer.WriteByte(ToByte(flags, i));
 		}
 
 		static byte ToByte(bool[] flags, int index) {
@@ -191,16 +198,16 @@ namespace dnlib.DotNet.Pdb.Portable {
 				helper.Error("Source code blob is null");
 				return;
 			}
-			writer.Write(d);
+			writer.WriteBytes(d);
 		}
 
 		void WriteSourceLink(PdbSourceLinkCustomDebugInfo cdi) {
-			var d = cdi.SourceLinkBlob;
+			var d = cdi.FileBlob;
 			if (d == null) {
 				helper.Error("Source link blob is null");
 				return;
 			}
-			writer.Write(d);
+			writer.WriteBytes(d);
 		}
 
 		void WriteAsyncMethodSteppingInformation(PdbAsyncMethodCustomDebugInfo cdi) {
@@ -214,9 +221,12 @@ namespace dnlib.DotNet.Pdb.Portable {
 				catchHandlerOffset = 0;
 			else
 				catchHandlerOffset = methodContext.GetOffset(cdi.CatchHandlerInstruction) + 1;
-			writer.Write(catchHandlerOffset);
+			writer.WriteUInt32(catchHandlerOffset);
 
-			foreach (var info in cdi.StepInfos) {
+			var cdiStepInfos = cdi.StepInfos;
+			int count = cdiStepInfos.Count;
+			for (int i = 0; i < count; i++) {
+				var info = cdiStepInfos[i];
 				if (info.YieldInstruction == null) {
 					helper.Error("YieldInstruction is null");
 					return;
@@ -235,9 +245,9 @@ namespace dnlib.DotNet.Pdb.Portable {
 					resumeOffset = methodContext.GetOffset(info.BreakpointInstruction);
 				else
 					resumeOffset = GetOffsetSlow(info.BreakpointMethod, info.BreakpointInstruction);
-				uint resumeMethodRid = systemMetaData.GetRid(info.BreakpointMethod);
-				writer.Write(yieldOffset);
-				writer.Write(resumeOffset);
+				uint resumeMethodRid = systemMetadata.GetRid(info.BreakpointMethod);
+				writer.WriteUInt32(yieldOffset);
+				writer.WriteUInt32(resumeOffset);
 				writer.WriteCompressedUInt32(resumeMethodRid);
 			}
 		}

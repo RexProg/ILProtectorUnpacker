@@ -1,8 +1,7 @@
 // dnlib: See LICENSE.txt for more info
 
-﻿using System;
+using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using dnlib.IO;
 using dnlib.PE;
 using dnlib.Threading;
@@ -11,7 +10,7 @@ namespace dnlib.DotNet.MD {
 	/// <summary>
 	/// Used when a #- stream is present in the metadata
 	/// </summary>
-	sealed class ENCMetaData : MetaData {
+	sealed class ENCMetadata : MetadataBase {
 		static readonly UTF8String DeletedName = "_Deleted";
 		bool hasMethodPtr, hasFieldPtr, hasParamPtr, hasEventPtr, hasPropertyPtr;
 		bool hasDeletedRows;
@@ -21,42 +20,27 @@ namespace dnlib.DotNet.MD {
 #endif
 
 		/// <inheritdoc/>
-		public override bool IsCompressed {
-			get { return false; }
-		}
+		public override bool IsCompressed => false;
 
 		/// <inheritdoc/>
-		public ENCMetaData(IPEImage peImage, ImageCor20Header cor20Header, MetaDataHeader mdHeader)
+		public ENCMetadata(IPEImage peImage, ImageCor20Header cor20Header, MetadataHeader mdHeader)
 			: base(peImage, cor20Header, mdHeader) {
 		}
 
 		/// <inheritdoc/>
-		internal ENCMetaData(MetaDataHeader mdHeader, bool isStandalonePortablePdb)
+		internal ENCMetadata(MetadataHeader mdHeader, bool isStandalonePortablePdb)
 			: base(mdHeader, isStandalonePortablePdb) {
 		}
 
 		/// <inheritdoc/>
-		protected override void InitializeInternal(IImageStream mdStream) {
-			bool disposeOfMdStream = false;
-			IImageStream imageStream = null;
+		protected override void InitializeInternal(DataReaderFactory mdReaderFactory, uint metadataBaseOffset) {
 			DotNetStream dns = null;
 			try {
-				if (peImage != null) {
-					Debug.Assert(mdStream == null);
-					Debug.Assert(cor20Header != null);
-					var mdOffset = peImage.ToFileOffset(cor20Header.MetaData.VirtualAddress);
-					mdStream = peImage.CreateStream(mdOffset, cor20Header.MetaData.Size);
-					disposeOfMdStream = true;
-				}
-				else
-					Debug.Assert(mdStream != null);
 				foreach (var sh in mdHeader.StreamHeaders) {
-					imageStream = mdStream.Create((FileOffset)sh.Offset, sh.StreamSize);
 					switch (sh.Name.ToUpperInvariant()) {
 					case "#STRINGS":
 						if (stringsStream == null) {
-							stringsStream = new StringsStream(imageStream, sh);
-							imageStream = null;
+							stringsStream = new StringsStream(mdReaderFactory, metadataBaseOffset, sh);
 							allStreams.Add(stringsStream);
 							continue;
 						}
@@ -64,8 +48,7 @@ namespace dnlib.DotNet.MD {
 
 					case "#US":
 						if (usStream == null) {
-							usStream = new USStream(imageStream, sh);
-							imageStream = null;
+							usStream = new USStream(mdReaderFactory, metadataBaseOffset, sh);
 							allStreams.Add(usStream);
 							continue;
 						}
@@ -73,8 +56,7 @@ namespace dnlib.DotNet.MD {
 
 					case "#BLOB":
 						if (blobStream == null) {
-							blobStream = new BlobStream(imageStream, sh);
-							imageStream = null;
+							blobStream = new BlobStream(mdReaderFactory, metadataBaseOffset, sh);
 							allStreams.Add(blobStream);
 							continue;
 						}
@@ -82,8 +64,7 @@ namespace dnlib.DotNet.MD {
 
 					case "#GUID":
 						if (guidStream == null) {
-							guidStream = new GuidStream(imageStream, sh);
-							imageStream = null;
+							guidStream = new GuidStream(mdReaderFactory, metadataBaseOffset, sh);
 							allStreams.Add(guidStream);
 							continue;
 						}
@@ -92,8 +73,7 @@ namespace dnlib.DotNet.MD {
 					case "#~":	// Only if #Schema is used
 					case "#-":
 						if (tablesStream == null) {
-							tablesStream = new TablesStream(imageStream, sh);
-							imageStream = null;
+							tablesStream = new TablesStream(mdReaderFactory, metadataBaseOffset, sh);
 							allStreams.Add(tablesStream);
 							continue;
 						}
@@ -103,26 +83,19 @@ namespace dnlib.DotNet.MD {
 						// Case sensitive comparison since it's a stream that's not read by the CLR,
 						// only by other libraries eg. System.Reflection.Metadata.
 						if (isStandalonePortablePdb && pdbStream == null && sh.Name == "#Pdb") {
-							pdbStream = new PdbStream(imageStream, sh);
-							imageStream = null;
+							pdbStream = new PdbStream(mdReaderFactory, metadataBaseOffset, sh);
 							allStreams.Add(pdbStream);
 							continue;
 						}
 						break;
 					}
-					dns = new DotNetStream(imageStream, sh);
-					imageStream = null;
+					dns = new CustomDotNetStream(mdReaderFactory, metadataBaseOffset, sh);
 					allStreams.Add(dns);
 					dns = null;
 				}
 			}
 			finally {
-				if (disposeOfMdStream)
-					mdStream.Dispose();
-				if (imageStream != null)
-					imageStream.Dispose();
-				if (dns != null)
-					dns.Dispose();
+				dns?.Dispose();
 			}
 
 			if (tablesStream == null)
@@ -147,10 +120,9 @@ namespace dnlib.DotNet.MD {
 			if (!hasDeletedRows)
 				return base.GetTypeDefRidList();
 			uint rows = tablesStream.TypeDefTable.Rows;
-			var list = new RandomRidList((int)rows);
+			var list = new List<uint>((int)rows);
 			for (uint rid = 1; rid <= rows; rid++) {
-				var row = tablesStream.ReadTypeDefRow(rid);
-				if (row == null)
+				if (!tablesStream.TryReadTypeDefRow(rid, out var row))
 					continue;	// Should never happen since rid is valid
 
 				// RTSpecialName is ignored by the CLR. It's only the name that indicates
@@ -159,7 +131,7 @@ namespace dnlib.DotNet.MD {
 					continue;	// ignore this deleted row
 				list.Add(rid);
 			}
-			return list;
+			return RidList.Create(list);
 		}
 
 		/// <inheritdoc/>
@@ -167,10 +139,9 @@ namespace dnlib.DotNet.MD {
 			if (!hasDeletedRows)
 				return base.GetExportedTypeRidList();
 			uint rows = tablesStream.ExportedTypeTable.Rows;
-			var list = new RandomRidList((int)rows);
+			var list = new List<uint>((int)rows);
 			for (uint rid = 1; rid <= rows; rid++) {
-				var row = tablesStream.ReadExportedTypeRow(rid);
-				if (row == null)
+				if (!tablesStream.TryReadExportedTypeRow(rid, out var row))
 					continue;	// Should never happen since rid is valid
 
 				// RTSpecialName is ignored by the CLR. It's only the name that indicates
@@ -179,7 +150,7 @@ namespace dnlib.DotNet.MD {
 					continue;	// ignore this deleted row
 				list.Add(rid);
 			}
-			return list;
+			return RidList.Create(list);
 		}
 
 		/// <summary>
@@ -190,8 +161,7 @@ namespace dnlib.DotNet.MD {
 		uint ToFieldRid(uint listRid) {
 			if (!hasFieldPtr)
 				return listRid;
-			uint listValue;
-			return tablesStream.ReadColumn(tablesStream.FieldPtrTable, listRid, 0, out listValue) ? listValue : 0;
+			return tablesStream.TryReadColumn24(tablesStream.FieldPtrTable, listRid, 0, out uint listValue) ? listValue : 0;
 		}
 
 		/// <summary>
@@ -202,8 +172,7 @@ namespace dnlib.DotNet.MD {
 		uint ToMethodRid(uint listRid) {
 			if (!hasMethodPtr)
 				return listRid;
-			uint listValue;
-			return tablesStream.ReadColumn(tablesStream.MethodPtrTable, listRid, 0, out listValue) ? listValue : 0;
+			return tablesStream.TryReadColumn24(tablesStream.MethodPtrTable, listRid, 0, out uint listValue) ? listValue : 0;
 		}
 
 		/// <summary>
@@ -214,8 +183,7 @@ namespace dnlib.DotNet.MD {
 		uint ToParamRid(uint listRid) {
 			if (!hasParamPtr)
 				return listRid;
-			uint listValue;
-			return tablesStream.ReadColumn(tablesStream.ParamPtrTable, listRid, 0, out listValue) ? listValue : 0;
+			return tablesStream.TryReadColumn24(tablesStream.ParamPtrTable, listRid, 0, out uint listValue) ? listValue : 0;
 		}
 
 		/// <summary>
@@ -226,8 +194,7 @@ namespace dnlib.DotNet.MD {
 		uint ToEventRid(uint listRid) {
 			if (!hasEventPtr)
 				return listRid;
-			uint listValue;
-			return tablesStream.ReadColumn(tablesStream.EventPtrTable, listRid, 0, out listValue) ? listValue : 0;
+			return tablesStream.TryReadColumn24(tablesStream.EventPtrTable, listRid, 0, out uint listValue) ? listValue : 0;
 		}
 
 		/// <summary>
@@ -238,26 +205,24 @@ namespace dnlib.DotNet.MD {
 		uint ToPropertyRid(uint listRid) {
 			if (!hasPropertyPtr)
 				return listRid;
-			uint listValue;
-			return tablesStream.ReadColumn(tablesStream.PropertyPtrTable, listRid, 0, out listValue) ? listValue : 0;
+			return tablesStream.TryReadColumn24(tablesStream.PropertyPtrTable, listRid, 0, out uint listValue) ? listValue : 0;
 		}
 
 		/// <inheritdoc/>
 		public override RidList GetFieldRidList(uint typeDefRid) {
 			var list = GetRidList(tablesStream.TypeDefTable, typeDefRid, 4, tablesStream.FieldTable);
-			if (list.Length == 0 || (!hasFieldPtr && !hasDeletedRows))
+			if (list.Count == 0 || (!hasFieldPtr && !hasDeletedRows))
 				return list;
 
 			var destTable = tablesStream.FieldTable;
-			var newList = new RandomRidList((int)list.Length);
-			for (uint i = 0; i < list.Length; i++) {
+			var newList = new List<uint>(list.Count);
+			for (int i = 0; i < list.Count; i++) {
 				var rid = ToFieldRid(list[i]);
 				if (destTable.IsInvalidRID(rid))
 					continue;
 				if (hasDeletedRows) {
 					// It's a deleted row if RTSpecialName is set and name is "_Deleted"
-					var row = tablesStream.ReadFieldRow(rid);
-					if (row == null)
+					if (!tablesStream.TryReadFieldRow(rid, out var row))
 						continue;	// Should never happen since rid is valid
 					if ((row.Flags & (uint)FieldAttributes.RTSpecialName) != 0) {
 						if (stringsStream.ReadNoNull(row.Name).StartsWith(DeletedName))
@@ -267,25 +232,24 @@ namespace dnlib.DotNet.MD {
 				// It's a valid non-deleted rid so add it
 				newList.Add(rid);
 			}
-			return newList;
+			return RidList.Create(newList);
 		}
 
 		/// <inheritdoc/>
 		public override RidList GetMethodRidList(uint typeDefRid) {
 			var list = GetRidList(tablesStream.TypeDefTable, typeDefRid, 5, tablesStream.MethodTable);
-			if (list.Length == 0 || (!hasMethodPtr && !hasDeletedRows))
+			if (list.Count == 0 || (!hasMethodPtr && !hasDeletedRows))
 				return list;
 
 			var destTable = tablesStream.MethodTable;
-			var newList = new RandomRidList((int)list.Length);
-			for (uint i = 0; i < list.Length; i++) {
+			var newList = new List<uint>(list.Count);
+			for (int i = 0; i < list.Count; i++) {
 				var rid = ToMethodRid(list[i]);
 				if (destTable.IsInvalidRID(rid))
 					continue;
 				if (hasDeletedRows) {
 					// It's a deleted row if RTSpecialName is set and name is "_Deleted"
-					var row = tablesStream.ReadMethodRow(rid);
-					if (row == null)
+					if (!tablesStream.TryReadMethodRow(rid, out var row))
 						continue;	// Should never happen since rid is valid
 					if ((row.Flags & (uint)MethodAttributes.RTSpecialName) != 0) {
 						if (stringsStream.ReadNoNull(row.Name).StartsWith(DeletedName))
@@ -295,42 +259,41 @@ namespace dnlib.DotNet.MD {
 				// It's a valid non-deleted rid so add it
 				newList.Add(rid);
 			}
-			return newList;
+			return RidList.Create(newList);
 		}
 
 		/// <inheritdoc/>
 		public override RidList GetParamRidList(uint methodRid) {
 			var list = GetRidList(tablesStream.MethodTable, methodRid, 5, tablesStream.ParamTable);
-			if (list.Length == 0 || !hasParamPtr)
+			if (list.Count == 0 || !hasParamPtr)
 				return list;
 
 			var destTable = tablesStream.ParamTable;
-			var newList = new RandomRidList((int)list.Length);
-			for (uint i = 0; i < list.Length; i++) {
+			var newList = new List<uint>(list.Count);
+			for (int i = 0; i < list.Count; i++) {
 				var rid = ToParamRid(list[i]);
 				if (destTable.IsInvalidRID(rid))
 					continue;
 				newList.Add(rid);
 			}
-			return newList;
+			return RidList.Create(newList);
 		}
 
 		/// <inheritdoc/>
 		public override RidList GetEventRidList(uint eventMapRid) {
 			var list = GetRidList(tablesStream.EventMapTable, eventMapRid, 1, tablesStream.EventTable);
-			if (list.Length == 0 || (!hasEventPtr && !hasDeletedRows))
+			if (list.Count == 0 || (!hasEventPtr && !hasDeletedRows))
 				return list;
 
 			var destTable = tablesStream.EventTable;
-			var newList = new RandomRidList((int)list.Length);
-			for (uint i = 0; i < list.Length; i++) {
+			var newList = new List<uint>(list.Count);
+			for (int i = 0; i < list.Count; i++) {
 				var rid = ToEventRid(list[i]);
 				if (destTable.IsInvalidRID(rid))
 					continue;
 				if (hasDeletedRows) {
 					// It's a deleted row if RTSpecialName is set and name is "_Deleted"
-					var row = tablesStream.ReadEventRow(rid);
-					if (row == null)
+					if (!tablesStream.TryReadEventRow(rid, out var row))
 						continue;	// Should never happen since rid is valid
 					if ((row.EventFlags & (uint)EventAttributes.RTSpecialName) != 0) {
 						if (stringsStream.ReadNoNull(row.Name).StartsWith(DeletedName))
@@ -340,25 +303,24 @@ namespace dnlib.DotNet.MD {
 				// It's a valid non-deleted rid so add it
 				newList.Add(rid);
 			}
-			return newList;
+			return RidList.Create(newList);
 		}
 
 		/// <inheritdoc/>
 		public override RidList GetPropertyRidList(uint propertyMapRid) {
 			var list = GetRidList(tablesStream.PropertyMapTable, propertyMapRid, 1, tablesStream.PropertyTable);
-			if (list.Length == 0 || (!hasPropertyPtr && !hasDeletedRows))
+			if (list.Count == 0 || (!hasPropertyPtr && !hasDeletedRows))
 				return list;
 
 			var destTable = tablesStream.PropertyTable;
-			var newList = new RandomRidList((int)list.Length);
-			for (uint i = 0; i < list.Length; i++) {
+			var newList = new List<uint>(list.Count);
+			for (int i = 0; i < list.Count; i++) {
 				var rid = ToPropertyRid(list[i]);
 				if (destTable.IsInvalidRID(rid))
 					continue;
 				if (hasDeletedRows) {
 					// It's a deleted row if RTSpecialName is set and name is "_Deleted"
-					var row = tablesStream.ReadPropertyRow(rid);
-					if (row == null)
+					if (!tablesStream.TryReadPropertyRow(rid, out var row))
 						continue;	// Should never happen since rid is valid
 					if ((row.PropFlags & (uint)PropertyAttributes.RTSpecialName) != 0) {
 						if (stringsStream.ReadNoNull(row.Name).StartsWith(DeletedName))
@@ -368,7 +330,7 @@ namespace dnlib.DotNet.MD {
 				// It's a valid non-deleted rid so add it
 				newList.Add(rid);
 			}
-			return newList;
+			return RidList.Create(newList);
 		}
 
 		/// <summary>
@@ -381,17 +343,9 @@ namespace dnlib.DotNet.MD {
 		/// <returns>A new <see cref="RidList"/> instance</returns>
 		RidList GetRidList(MDTable tableSource, uint tableSourceRid, int colIndex, MDTable tableDest) {
 			var column = tableSource.TableInfo.Columns[colIndex];
-			uint startRid, nextListRid;
-			bool hasNext;
-#if THREAD_SAFE
-			tablesStream.theLock.EnterWriteLock(); try {
-#endif
-			if (!tablesStream.ReadColumn_NoLock(tableSource, tableSourceRid, column, out startRid))
+			if (!tablesStream.TryReadColumn24(tableSource, tableSourceRid, column, out uint startRid))
 				return RidList.Empty;
-			hasNext = tablesStream.ReadColumn_NoLock(tableSource, tableSourceRid + 1, column, out nextListRid);
-#if THREAD_SAFE
-			} finally { tablesStream.theLock.ExitWriteLock(); }
-#endif
+			bool hasNext = tablesStream.TryReadColumn24(tableSource, tableSourceRid + 1, column, out uint nextListRid);
 			uint lastRid = tableDest.Rows + 1;
 			if (startRid == 0 || startRid >= lastRid)
 				return RidList.Empty;
@@ -400,17 +354,16 @@ namespace dnlib.DotNet.MD {
 				endRid = startRid;
 			if (endRid > lastRid)
 				endRid = lastRid;
-			return new ContiguousRidList(startRid, endRid - startRid);
+			return RidList.Create(startRid, endRid - startRid);
 		}
 
 		/// <inheritdoc/>
-		protected override uint BinarySearch_NoLock(MDTable tableSource, int keyColIndex, uint key) {
+		protected override uint BinarySearch(MDTable tableSource, int keyColIndex, uint key) {
 			var keyColumn = tableSource.TableInfo.Columns[keyColIndex];
 			uint ridLo = 1, ridHi = tableSource.Rows;
 			while (ridLo <= ridHi) {
 				uint rid = (ridLo + ridHi) / 2;
-				uint key2;
-				if (!tablesStream.ReadColumn_NoLock(tableSource, rid, keyColumn, out key2))
+				if (!tablesStream.TryReadColumn24(tableSource, rid, keyColumn, out uint key2))
 					break;	// Never happens since rid is valid
 				if (key == key2)
 					return rid;
@@ -421,7 +374,7 @@ namespace dnlib.DotNet.MD {
 			}
 
 			if (tableSource.Table == Table.GenericParam && !tablesStream.IsSorted(tableSource))
-				return LinearSearch_NoLock(tableSource, keyColIndex, key);
+				return LinearSearch(tableSource, keyColIndex, key);
 
 			return 0;
 		}
@@ -434,13 +387,12 @@ namespace dnlib.DotNet.MD {
 		/// <param name="keyColIndex">Key column index</param>
 		/// <param name="key">Key</param>
 		/// <returns>The <c>rid</c> of the found row, or 0 if none found</returns>
-		uint LinearSearch_NoLock(MDTable tableSource, int keyColIndex, uint key) {
+		uint LinearSearch(MDTable tableSource, int keyColIndex, uint key) {
 			if (tableSource == null)
 				return 0;
 			var keyColumn = tableSource.TableInfo.Columns[keyColIndex];
 			for (uint rid = 1; rid <= tableSource.Rows; rid++) {
-				uint key2;
-				if (!tablesStream.ReadColumn_NoLock(tableSource, rid, keyColumn, out key2))
+				if (!tablesStream.TryReadColumn24(tableSource, rid, keyColumn, out uint key2))
 					break;	// Never happens since rid is valid
 				if (key == key2)
 					return rid;

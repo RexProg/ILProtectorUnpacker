@@ -1,6 +1,6 @@
 // dnlib: See LICENSE.txt for more info
 
-using System.IO;
+using System;
 using dnlib.IO;
 using dnlib.PE;
 
@@ -13,7 +13,7 @@ namespace dnlib.DotNet.Writer {
 		readonly RelocDirectory relocDirectory;
 		readonly Machine machine;
 		readonly CpuArch cpuArch;
-		readonly LogError logError;
+		readonly Action<string, object[]> logError;
 		FileOffset offset;
 		RVA rva;
 
@@ -28,29 +28,18 @@ namespace dnlib.DotNet.Writer {
 		public PEHeaders PEHeaders { get; set; }
 
 		/// <inheritdoc/>
-		public FileOffset FileOffset {
-			get { return offset; }
-		}
+		public FileOffset FileOffset => offset;
 
 		/// <inheritdoc/>
-		public RVA RVA {
-			get { return rva; }
-		}
+		public RVA RVA => rva;
 
 		/// <summary>
 		/// Gets the address of the JMP instruction
 		/// </summary>
-		public RVA EntryPointRVA {
-			get { return rva + (cpuArch == null ? 0 : cpuArch.GetStubCodeOffset(stubType)); }
-		}
+		public RVA EntryPointRVA => rva + (cpuArch == null ? 0 : cpuArch.GetStubCodeOffset(stubType));
 
 		internal bool Enable { get; set; }
-
-		internal uint Alignment {
-			get { return cpuArch == null ? 1 : cpuArch.GetStubAlignment(stubType); }
-		}
-
-		internal delegate void LogError(string format, params object[] args);
+		internal uint Alignment => cpuArch == null ? 1 : cpuArch.GetStubAlignment(stubType);
 
 		/// <summary>
 		/// Constructor
@@ -58,7 +47,7 @@ namespace dnlib.DotNet.Writer {
 		/// <param name="relocDirectory">Reloc directory</param>
 		/// <param name="machine">Machine</param>
 		/// <param name="logError">Error logger</param>
-		internal StartupStub(RelocDirectory relocDirectory, Machine machine, LogError logError) {
+		internal StartupStub(RelocDirectory relocDirectory, Machine machine, Action<string, object[]> logError) {
 			this.relocDirectory = relocDirectory;
 			this.machine = machine;
 			this.logError = logError;
@@ -74,7 +63,7 @@ namespace dnlib.DotNet.Writer {
 				return;
 
 			if (cpuArch == null) {
-				logError("The module needs an unmanaged entry point but the CPU architecture isn't supported: {0} (0x{1:X4})", machine, (ushort)machine);
+				logError("The module needs an unmanaged entry point but the CPU architecture isn't supported: {0} (0x{1:X4})", new object[] { machine, (ushort)machine });
 				return;
 			}
 
@@ -91,12 +80,10 @@ namespace dnlib.DotNet.Writer {
 		}
 
 		/// <inheritdoc/>
-		public uint GetVirtualSize() {
-			return GetFileLength();
-		}
+		public uint GetVirtualSize() => GetFileLength();
 
 		/// <inheritdoc/>
-		public void WriteTo(BinaryWriter writer) {
+		public void WriteTo(DataWriter writer) {
 			if (!Enable)
 				return;
 			if (cpuArch == null)

@@ -17,6 +17,7 @@ namespace dnlib.DotNet.Pdb {
 		readonly Dictionary<PdbDocument, PdbDocument> docDict = new Dictionary<PdbDocument, PdbDocument>();
 		MethodDef userEntryPoint;
 		readonly Compiler compiler;
+		readonly PdbFileKind originalPdbFileKind;
 
 #if THREAD_SAFE
 		readonly Lock theLock = Lock.Create();
@@ -32,8 +33,8 @@ namespace dnlib.DotNet.Pdb {
 		/// Gets/sets the user entry point method.
 		/// </summary>
 		public MethodDef UserEntryPoint {
-			get { return userEntryPoint; }
-			set { userEntryPoint = value; }
+			get => userEntryPoint;
+			set => userEntryPoint = value;
 		}
 
 		/// <summary>
@@ -74,9 +75,10 @@ namespace dnlib.DotNet.Pdb {
 		/// <param name="pdbFileKind">PDB file kind</param>
 		public PdbState(ModuleDef module, PdbFileKind pdbFileKind) {
 			if (module == null)
-				throw new ArgumentNullException("module");
-			this.compiler = CalculateCompiler(module);
+				throw new ArgumentNullException(nameof(module));
+			compiler = CalculateCompiler(module);
 			PdbFileKind = pdbFileKind;
+			originalPdbFileKind = pdbFileKind;
 		}
 
 		/// <summary>
@@ -85,19 +87,20 @@ namespace dnlib.DotNet.Pdb {
 		/// <param name="reader">A <see cref="SymbolReader"/> instance</param>
 		/// <param name="module">Owner module</param>
 		public PdbState(SymbolReader reader, ModuleDefMD module) {
-			if (reader == null)
-				throw new ArgumentNullException("reader");
 			if (module == null)
-				throw new ArgumentNullException("module");
-			this.reader = reader;
+				throw new ArgumentNullException(nameof(module));
+			this.reader = reader ?? throw new ArgumentNullException(nameof(reader));
 			reader.Initialize(module);
 			PdbFileKind = reader.PdbFileKind;
-			this.compiler = CalculateCompiler(module);
+			originalPdbFileKind = reader.PdbFileKind;
+			compiler = CalculateCompiler(module);
 
-			this.userEntryPoint = module.ResolveToken(reader.UserEntryPoint) as MethodDef;
+			userEntryPoint = module.ResolveToken(reader.UserEntryPoint) as MethodDef;
 
-			foreach (var doc in reader.Documents)
-				Add_NoLock(new PdbDocument(doc));
+			var documents = reader.Documents;
+			int count = documents.Count;
+			for (int i = 0; i < count; i++)
+				Add_NoLock(documents[i]);
 		}
 
 		/// <summary>
@@ -117,9 +120,18 @@ namespace dnlib.DotNet.Pdb {
 		}
 
 		PdbDocument Add_NoLock(PdbDocument doc) {
-			PdbDocument orig;
-			if (docDict.TryGetValue(doc, out orig))
+			if (docDict.TryGetValue(doc, out var orig))
 				return orig;
+			docDict.Add(doc, doc);
+			return doc;
+		}
+
+		PdbDocument Add_NoLock(SymbolDocument symDoc) {
+			var doc = PdbDocument.CreatePartialForCompare(symDoc);
+			if (docDict.TryGetValue(doc, out var orig))
+				return orig;
+			// Expensive part, can read source code etc
+			doc.Initialize(symDoc);
 			docDict.Add(doc, doc);
 			return doc;
 		}
@@ -149,8 +161,7 @@ namespace dnlib.DotNet.Pdb {
 #if THREAD_SAFE
 			theLock.EnterWriteLock(); try {
 #endif
-			PdbDocument orig;
-			docDict.TryGetValue(doc, out orig);
+			docDict.TryGetValue(doc, out var orig);
 			return orig;
 #if THREAD_SAFE
 			} finally { theLock.ExitWriteLock(); }
@@ -161,9 +172,7 @@ namespace dnlib.DotNet.Pdb {
 		/// Removes all documents
 		/// </summary>
 		/// <returns></returns>
-		public void RemoveAllDocuments() {
-			RemoveAllDocuments(false);
-		}
+		public void RemoveAllDocuments() => RemoveAllDocuments(false);
 
 		/// <summary>
 		/// Removes all documents and optionally returns them
@@ -184,9 +193,7 @@ namespace dnlib.DotNet.Pdb {
 #endif
 		}
 
-		internal Compiler Compiler {
-			get { return compiler; }
-		}
+		internal Compiler Compiler => compiler;
 
 		internal void InitializeMethodBody(ModuleDefMD module, MethodDef ownerMethod, CilBody body) {
 			if (reader == null)
@@ -215,28 +222,36 @@ namespace dnlib.DotNet.Pdb {
 				return Compiler.Other;
 
 			foreach (var asmRef in module.GetAssemblyRefs()) {
-				if (asmRef.Name == nameAssemblyVisualBasic)
+				if (asmRef.Name == nameAssemblyVisualBasic || asmRef.Name == nameAssemblyVisualBasicCore)
 					return Compiler.VisualBasic;
 			}
 
+// Disable this for now, we shouldn't be resolving types this early since we could be called by the ModuleDefMD ctor
+#if false
 			// The VB runtime can also be embedded, and if so, it seems that "Microsoft.VisualBasic.Embedded"
 			// attribute is added to the assembly's custom attributes.
 			var asm = module.Assembly;
 			if (asm != null && asm.CustomAttributes.IsDefined("Microsoft.VisualBasic.Embedded"))
 				return Compiler.VisualBasic;
+#endif
 
 			return Compiler.Other;
 		}
 		static readonly UTF8String nameAssemblyVisualBasic = new UTF8String("Microsoft.VisualBasic");
+		// .NET Core 3.0 has this assembly because Microsoft.VisualBasic contains WinForms refs
+		static readonly UTF8String nameAssemblyVisualBasicCore = new UTF8String("Microsoft.VisualBasic.Core");
 
 		void AddSequencePoints(CilBody body, SymbolMethod method) {
 			int instrIndex = 0;
-			foreach (var sp in method.SequencePoints) {
+			var sequencePoints = method.SequencePoints;
+			int count = sequencePoints.Count;
+			for (int i = 0; i < count; i++) {
+				var sp = sequencePoints[i];
 				var instr = GetInstruction(body.Instructions, sp.Offset, ref instrIndex);
 				if (instr == null)
 					continue;
 				var seqPoint = new SequencePoint() {
-					Document = Add_NoLock(new PdbDocument(sp.Document)),
+					Document = Add_NoLock(sp.Document),
 					StartLine = sp.Line,
 					StartColumn = sp.Column,
 					EndLine = sp.EndLine,
@@ -260,17 +275,22 @@ namespace dnlib.DotNet.Pdb {
 			// Don't use recursive calls
 			var stack = new Stack<CreateScopeState>();
 			var state = new CreateScopeState() { SymScope = symScope };
+			int endIsInclusiveValue = PdbUtils.IsEndInclusive(originalPdbFileKind, Compiler) ? 1 : 0;
 recursive_call:
 			int instrIndex = 0;
-			int endIsInclusiveValue = Compiler == Compiler.VisualBasic ? 1 : 0;
 			state.PdbScope = new PdbScope() {
 				Start = GetInstruction(body.Instructions, state.SymScope.StartOffset, ref instrIndex),
 				End   = GetInstruction(body.Instructions, state.SymScope.EndOffset + endIsInclusiveValue, ref instrIndex),
 			};
-			foreach (var cdi in state.SymScope.CustomDebugInfos)
-				state.PdbScope.CustomDebugInfos.Add(cdi);
+			var cdis = state.SymScope.CustomDebugInfos;
+			int count = cdis.Count;
+			for (int i = 0; i < count; i++)
+				state.PdbScope.CustomDebugInfos.Add(cdis[i]);
 
-			foreach (var symLocal in state.SymScope.Locals) {
+			var locals = state.SymScope.Locals;
+			count = locals.Count;
+			for (int i = 0; i < count; i++) {
+				var symLocal = locals[i];
 				int localIndex = symLocal.Index;
 				if ((uint)localIndex >= (uint)body.Variables.Count) {
 					// VB sometimes creates a PDB local without a metadata local
@@ -282,13 +302,17 @@ recursive_call:
 				var attributes = symLocal.Attributes;
 				local.SetAttributes(attributes);
 				var pdbLocal = new PdbLocal(local, name, attributes);
-				foreach (var cdi in symLocal.CustomDebugInfos)
-					pdbLocal.CustomDebugInfos.Add(cdi);
+				cdis = symLocal.CustomDebugInfos;
+				int count2 = cdis.Count;
+				for (int j = 0; j < count2; j++)
+					pdbLocal.CustomDebugInfos.Add(cdis[j]);
 				state.PdbScope.Variables.Add(pdbLocal);
 			}
 
-			foreach (var ns in state.SymScope.Namespaces)
-				state.PdbScope.Namespaces.Add(ns.Name);
+			var namespaces = state.SymScope.Namespaces;
+			count = namespaces.Count;
+			for (int i = 0; i < count; i++)
+				state.PdbScope.Namespaces.Add(namespaces[i].Name);
 			state.PdbScope.ImportScope = state.SymScope.ImportScope;
 
 			var constants = state.SymScope.GetConstants(module, gpContext);
@@ -420,14 +444,10 @@ do_return:
 
 		internal void InitializeCustomDebugInfos(MDToken token, GenericParamContext gpContext, IList<PdbCustomDebugInfo> result) {
 			Debug.Assert(token.Table != Table.Method, "Methods get initialized when reading the method bodies");
-			if (reader != null)
-				reader.GetCustomDebugInfos(token.ToInt32(), gpContext, result);
+			reader?.GetCustomDebugInfos(token.ToInt32(), gpContext, result);
 		}
 
-		internal void Dispose() {
-			if (reader != null)
-				reader.Dispose();
-		}
+		internal void Dispose() => reader?.Dispose();
 	}
 
 	enum Compiler {

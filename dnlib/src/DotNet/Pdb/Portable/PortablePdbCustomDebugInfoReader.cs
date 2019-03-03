@@ -5,20 +5,18 @@
 using System;
 using System.Diagnostics;
 using System.IO;
-using System.Text;
 using dnlib.DotNet.Emit;
 using dnlib.DotNet.MD;
 using dnlib.IO;
 
 namespace dnlib.DotNet.Pdb.Portable {
-	struct PortablePdbCustomDebugInfoReader : IDisposable {
-		public static PdbCustomDebugInfo Read(ModuleDef module, TypeDef typeOpt, CilBody bodyOpt, GenericParamContext gpContext, Guid kind, byte[] data) {
+	struct PortablePdbCustomDebugInfoReader {
+		public static PdbCustomDebugInfo Read(ModuleDef module, TypeDef typeOpt, CilBody bodyOpt, GenericParamContext gpContext, Guid kind, ref DataReader reader) {
 			try {
-				using (var reader = new PortablePdbCustomDebugInfoReader(module, typeOpt, bodyOpt, gpContext, MemoryImageStream.Create(data))) {
-					var cdi = reader.Read(kind);
-					Debug.Assert(reader.reader.Position == reader.reader.Length);
-					return cdi;
-				}
+				var cdiReader = new PortablePdbCustomDebugInfoReader(module, typeOpt, bodyOpt, gpContext, ref reader);
+				var cdi = cdiReader.Read(kind);
+				Debug.Assert(cdiReader.reader.Position == cdiReader.reader.Length);
+				return cdi;
 			}
 			catch (ArgumentException) {
 			}
@@ -33,9 +31,9 @@ namespace dnlib.DotNet.Pdb.Portable {
 		readonly TypeDef typeOpt;
 		readonly CilBody bodyOpt;
 		readonly GenericParamContext gpContext;
-		readonly IBinaryReader reader;
+		DataReader reader;
 
-		PortablePdbCustomDebugInfoReader(ModuleDef module, TypeDef typeOpt, CilBody bodyOpt, GenericParamContext gpContext, IBinaryReader reader) {
+		PortablePdbCustomDebugInfoReader(ModuleDef module, TypeDef typeOpt, CilBody bodyOpt, GenericParamContext gpContext, ref DataReader reader) {
 			this.module = module;
 			this.typeOpt = typeOpt;
 			this.bodyOpt = bodyOpt;
@@ -111,7 +109,7 @@ namespace dnlib.DotNet.Pdb.Portable {
 		}
 
 		PdbCustomDebugInfo ReadDefaultNamespace() {
-			var defaultNs = Encoding.UTF8.GetString(reader.ReadRemainingBytes());
+			var defaultNs = reader.ReadUtf8String((int)reader.BytesLeft);
 			return new PdbDefaultNamespaceCustomDebugInfo(defaultNs);
 		}
 
@@ -126,9 +124,7 @@ namespace dnlib.DotNet.Pdb.Portable {
 			return new PdbDynamicLocalVariablesCustomDebugInfo(flags);
 		}
 
-		PdbCustomDebugInfo ReadEmbeddedSource() {
-			return new PdbEmbeddedSourceCustomDebugInfo(reader.ReadRemainingBytes());
-		}
+		PdbCustomDebugInfo ReadEmbeddedSource() => new PdbEmbeddedSourceCustomDebugInfo(reader.ReadRemainingBytes());
 
 		PdbCustomDebugInfo ReadEncLambdaAndClosureMap(long recPosEnd) {
 			var data = reader.ReadBytes((int)(recPosEnd - reader.Position));
@@ -140,9 +136,7 @@ namespace dnlib.DotNet.Pdb.Portable {
 			return new PdbEditAndContinueLocalSlotMapCustomDebugInfo(data);
 		}
 
-		PdbCustomDebugInfo ReadSourceLink() {
-			return new PdbSourceLinkCustomDebugInfo(reader.ReadRemainingBytes());
-		}
+		PdbCustomDebugInfo ReadSourceLink() => new PdbSourceLinkCustomDebugInfo(reader.ReadRemainingBytes());
 
 		PdbCustomDebugInfo ReadStateMachineHoistedLocalScopes() {
 			if (bodyOpt == null)
@@ -178,12 +172,7 @@ namespace dnlib.DotNet.Pdb.Portable {
 		string ReadUTF8Z(long recPosEnd) {
 			if (reader.Position > recPosEnd)
 				return null;
-			var bytes = reader.ReadBytesUntilByte(0);
-			if (bytes == null)
-				return null;
-			var s = Encoding.UTF8.GetString(bytes);
-			reader.Position++;
-			return s;
+			return reader.TryReadZeroTerminatedUtf8String();
 		}
 
 		Instruction GetInstruction(uint offset) {
@@ -221,10 +210,6 @@ namespace dnlib.DotNet.Pdb.Portable {
 					lo = i + 1;
 			}
 			return null;
-		}
-
-		public void Dispose() {
-			reader.Dispose();
 		}
 	}
 }
