@@ -26,27 +26,28 @@ namespace ILProtectorUnpacker
             //Console.WriteLine("Press any key to continue...");
             //Console.ReadKey(true);
 
-            // skip first 6 bytes
-            // 0x55,         push ebp
-            // 0x8B, 0xEC,   mov ebp, esp
-            // 0x57,         push edi
-            // 0x56,         push esi
-            // 0x50,         push eax
-            addressSrc += 6;
-
-            byte[] bytesBefore =
-            {
-                0x58,               // pop eax
-                0x5E,               // pop esi
-                0x5F,               // pop eax
-                // pop ebp alternative
-                0x8B, 0x2C, 0x24,   // mov ebp, dword ptr [esp]
-                0x83, 0xC4, 0x04    // add esp, 4
-            };
-            byte[] jmpBytes;
+            byte[] bytesBefore, jmpBytes;
 
             if (IntPtr.Size == 4)
             {
+                // skip first 6 bytes
+                // 0x55,         push ebp
+                // 0x8B, 0xEC,   mov ebp, esp
+                // 0x57,         push edi
+                // 0x56,         push esi
+                // 0x50,         push eax
+                addressSrc += 6;
+
+                bytesBefore = new byte[]
+                {
+                    0x58,               // pop eax
+                    0x5E,               // pop esi
+                    0x5F,               // pop eax
+                    // pop ebp alternative
+                    0x8B, 0x2C, 0x24,   // mov ebp, dword ptr [esp]
+                    0x83, 0xC4, 0x04    // add esp, 4
+                };
+
                 jmpBytes = new byte[]
                 {
                     0x33, 0xC0, // xor eax, eax
@@ -62,12 +63,25 @@ namespace ILProtectorUnpacker
             }
             else if (IntPtr.Size == 8)
             {
+                // skip first 3 bytes
+                // 0x57,         push rdi
+                // 0x55,         push rsi
+                // 0x53,         push rbx
+                addressSrc += 3;
+
+                bytesBefore = new byte[]
+                {
+                    0x5B,       // pop rbx
+                    0x5E,       // pop rsi
+                    0x5F        // pop rdi
+                };
+
                 jmpBytes = new byte[]
                 {
                     // movabs r11, target
-                    0x49, 0xBB, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                    // jmp r11
-                    0x41, 0xFF, 0xE3
+                    0x49, 0xBB, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,            
+                    0x41, 0xFF, 0xE3,   // jmp r11
+                    0xC3                // ret
                 };
                 fixed (byte* p = jmpBytes)
                 {
