@@ -144,9 +144,9 @@ namespace ILProtectorUnpacker
                         methodDef.Body.Instructions.Remove(methodDef.Body.Instructions[startIndex]);
                 }
 
-                foreach (var def in globalType.Methods
+                foreach (var def in globalType.Methods.Where(met => met.HasImplMap)
                     .Where(met => new [] { "Protect32.dll", "Protect64.dll" }
-                        .Any(x => x == met.ImplMap?.Module.Name.ToString())))
+                        .Any(x => x == met.ImplMap?.Module.Name.ToString())).ToList())
                     globalType.Remove(def);
 
                 var dlls = globalType.Methods.Where(x => x.HasBody && x.Body.HasInstructions)
