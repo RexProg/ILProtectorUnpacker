@@ -9,6 +9,7 @@ using System.Reflection;
 using System.Threading;
 using dnlib.DotNet;
 using dnlib.DotNet.Emit;
+using MonoMod.Utils;
 
 #endregion
 
@@ -20,9 +21,12 @@ namespace ILProtectorUnpacker
         public static AssemblyWriter AssemblyWriter;
         public static Assembly Assembly;
         public static MethodDef CurrentMethod;
+        public static MethodBase CurrentMethodBase;
         public static StackFrame[] MainFrames;
         public static List<TypeDef> JunkType = new List<TypeDef>();
 
+        private static int _totalPackedMethods;
+        private static int _totalUnpackedMethods;
 
         private static void Main(string[] args)
         {
@@ -34,7 +38,7 @@ namespace ILProtectorUnpacker
                 Console.WriteLine("*********************************");
                 Console.WriteLine("***                           ***");
                 Console.WriteLine("***    ILProtector Unpacker   ***");
-                Console.WriteLine("***   V2.0.21.14 - V2.0.22.8  ***");
+                Console.WriteLine("***   V2.0.21.2 - V2.0.22.14  ***");
                 Console.WriteLine("***     Coded By RexProg      ***");
                 Console.WriteLine("***     Updated By krysty     ***");
                 Console.WriteLine("***                           ***");
@@ -45,8 +49,18 @@ namespace ILProtectorUnpacker
 
                 var path = Console.ReadLine();
 
-                if (path == string.Empty)
-                    return;
+                if (string.IsNullOrEmpty(path))
+                {
+                    if (args.Length == 1)
+                    {
+                        path = args[0];
+                    }
+                    else
+                    {
+                        return;
+                    }
+                }
+
                 if (path != null && path.StartsWith("\"") && path[path.Length - 1] == '"')
                     path = path.Substring(1, path.Length - 2);
 
@@ -73,6 +87,8 @@ namespace ILProtectorUnpacker
                 AssemblyWriter = new AssemblyWriter(path);
                 Assembly = Assembly.LoadFrom(path ?? throw new Exception("path is null"));
                 Console.WriteLine("[+] Wait...");
+
+                HookSystemRuntimeTypeGetMethodBase();
 
                 MainFrames = new StackTrace().GetFrames();
 
@@ -127,48 +143,15 @@ namespace ILProtectorUnpacker
                     typeDef.DeclaringType.NestedTypes.Remove(typeDef);
                 }
 
-                var methodDef = globalType.FindStaticConstructor();
-
-                if (methodDef.HasBody)
+                if (_totalUnpackedMethods == _totalPackedMethods)
                 {
-                    var startIndex = methodDef.Body.Instructions.IndexOf(methodDef.Body.Instructions.FirstOrDefault(
-                                         inst => inst.OpCode == OpCodes.Call && ((IMethod)inst.Operand).Name == "GetIUnknownForObject")) - 2;
-
-                    var endIndex = methodDef.Body.Instructions.IndexOf(methodDef.Body.Instructions.FirstOrDefault(
-                                       inst => inst.OpCode == OpCodes.Call && ((IMethod)inst.Operand).Name == "Release")) + 2;
-
-                    methodDef.Body.ExceptionHandlers.Remove(methodDef.Body.ExceptionHandlers.FirstOrDefault(
-                        exh => exh.HandlerEnd == methodDef.Body.Instructions[endIndex + 1]));
-
-                    for (var i = startIndex; i <= endIndex; i++)
-                        methodDef.Body.Instructions.Remove(methodDef.Body.Instructions[startIndex]);
+                    CleanAssembly();
                 }
-
-                foreach (var def in globalType.Methods.Where(met => met.HasImplMap)
-                    .Where(met => new [] { "Protect32.dll", "Protect64.dll" }
-                        .Any(x => x == met.ImplMap?.Module.Name.ToString())).ToList())
-                    globalType.Remove(def);
-
-                var dlls = globalType.Methods.Where(x => x.HasBody && x.Body.HasInstructions)
-                    .SelectMany(x => x.Body.Instructions)
-                    .Where(x => x.OpCode == OpCodes.Ldstr && x.Operand is string)
-                    .Select(x => x.Operand as string)
-                    .Where(x => !string.IsNullOrEmpty(x))
-                    .Where(x => x.StartsWith("Protect") && x.EndsWith(".dll"))
-                    .Distinct()
-                    .ToArray();
-
-                if (dlls.Any())
-                {
-                    Console.WriteLine(string.Join(", ", dlls));
-                }
-
-                var invokeField = globalType.Fields.FirstOrDefault(fld => fld.Name == "Invoke");
-                AssemblyWriter.moduleDef.Types.Remove(invokeField?.FieldType.ToTypeDefOrRef().ResolveTypeDef());
-                globalType.Fields.Remove(invokeField);
 
                 AssemblyWriter.Save();
                 Console.ForegroundColor = ConsoleColor.Blue;
+                Console.WriteLine($"[!] Total packed methods:   {_totalPackedMethods}");
+                Console.WriteLine($"[!] Total unpacked methods: {_totalUnpackedMethods}");
                 Console.WriteLine("[!] Program Unpacked");
             }
             catch (Exception ex)
@@ -191,7 +174,10 @@ namespace ILProtectorUnpacker
 
             foreach (var methodDef in methodDefs)
             {
+                _totalPackedMethods++;
+
                 CurrentMethod = methodDef;
+                CurrentMethodBase = Assembly.ManifestModule.ResolveMethod(methodDef.MDToken.ToInt32());
 
                 var mdToken = ((IType) methodDef.Body.Instructions[3].Operand).MDToken.ToInt32();
                 JunkType.Add(methodDef.DeclaringType.NestedTypes.FirstOrDefault(net => net.MDToken.ToInt32() == mdToken));
@@ -206,6 +192,7 @@ namespace ILProtectorUnpacker
                     dynamicMethodBodyReader.Read();
                     var unpackedMethod = dynamicMethodBodyReader.GetMethod();
                     AssemblyWriter.WriteMethod(methodDef, unpackedMethod);
+                    _totalUnpackedMethods++;
                 }
                 catch (Exception ex)
                 {
@@ -215,6 +202,86 @@ namespace ILProtectorUnpacker
                 {
                     CurrentMethod = null;
                 }
+            }
+        }
+
+        private static void CleanAssembly()
+        {
+            var globalType = AssemblyWriter.moduleDef.GlobalType;
+
+            IEnumerable<MethodDef> CollectMethodDefsToRemove(TypeDef gTypeDef, MethodDef mDef)
+            {
+                var methodDefs = new HashSet<MethodDef>();
+                if (mDef.HasBody)
+                {
+                    foreach (var instr in mDef.Body.Instructions
+                        .Where(x => x.OpCode == OpCodes.Call)
+                        .Where(x => x.Operand is MethodDef)
+                        .Where(x => ((MethodDef)x.Operand).FullName.Contains(globalType.Name)))
+                    {
+                        methodDefs.Add(instr.Operand as MethodDef);
+                        foreach (var mdef in CollectMethodDefsToRemove(globalType, instr.Operand as MethodDef))
+                        {
+                            methodDefs.Add(mdef);
+                        }
+                    }
+                }
+                return methodDefs;
+            }
+
+            var methodDef = globalType.FindStaticConstructor();
+
+            var methodDefsToRemove = new List<MethodDef>();
+
+            if (methodDef.HasBody)
+            {
+                var startIndex = methodDef.Body.Instructions.IndexOf(methodDef.Body.Instructions.FirstOrDefault(
+                                     inst => inst.OpCode == OpCodes.Call && ((IMethod)inst.Operand).Name == "GetIUnknownForObject")) - 2;
+
+                var endIndex = methodDef.Body.Instructions.IndexOf(methodDef.Body.Instructions.FirstOrDefault(
+                                   inst => inst.OpCode == OpCodes.Call && ((IMethod)inst.Operand).Name == "Release")) + 2;
+
+                methodDef.Body.ExceptionHandlers.Remove(methodDef.Body.ExceptionHandlers.FirstOrDefault(
+                    exh => exh.HandlerEnd == methodDef.Body.Instructions[endIndex + 1]));
+
+                methodDefsToRemove.AddRange(CollectMethodDefsToRemove(globalType, methodDef));
+
+                for (var i = startIndex; i <= endIndex; i++)
+                {
+                    methodDef.Body.Instructions.Remove(methodDef.Body.Instructions[startIndex]);
+                }
+            }
+
+            foreach (var def in globalType.Methods.Where(met => met.HasImplMap)
+                .Where(met => new[] { "Protect32.dll", "Protect64.dll" }
+                    .Any(x => x == met.ImplMap?.Module.Name.ToString())).ToList())
+                globalType.Remove(def);
+
+            var dlls = globalType.Methods.Where(x => x.HasBody && x.Body.HasInstructions)
+                .SelectMany(x => x.Body.Instructions)
+                .Where(x => x.OpCode == OpCodes.Ldstr && x.Operand is string)
+                .Select(x => x.Operand as string)
+                .Where(x => !string.IsNullOrEmpty(x))
+                .Where(x => x.StartsWith("Protect") && x.EndsWith(".dll"))
+                .Distinct()
+                .ToArray();
+
+            if (dlls.Any())
+            {
+                Console.WriteLine(string.Join(", ", dlls));
+
+                var resourcesToRemove = AssemblyWriter.moduleDef.Resources.Where(x => dlls.Any(d => d == x.Name)).ToList();
+                resourcesToRemove.ForEach(res => AssemblyWriter.moduleDef.Resources.Remove(res));
+            }
+
+            methodDefsToRemove.ForEach(mdef => globalType.Methods.Remove(mdef));
+
+            var fieldDefsToRemove = globalType.Fields.Where(fld => fld.Name == "Invoke" || fld.Name == "String").ToList();
+
+            foreach (var field in fieldDefsToRemove)
+            {
+                AssemblyWriter.moduleDef.Types.Remove(field.FieldType.ToTypeDefOrRef().ResolveTypeDef());
+                globalType.Fields.Remove(field);
             }
         }
 
@@ -319,6 +386,59 @@ namespace ILProtectorUnpacker
             if (result.Name == "InvokeMethod")
                 result = Assembly.Modules.FirstOrDefault()?.ResolveMethod(CurrentMethod.MDToken.ToInt32());
             return result;
+        }
+
+        public static void Hook5(ref MethodBase methodBase)
+        {
+            if (methodBase.Name == "InvokeMethod" && methodBase.DeclaringType == typeof(RuntimeMethodHandle))
+            {
+                methodBase = CurrentMethodBase;
+            }
+        }
+
+        private static void HookSystemRuntimeTypeGetMethodBase()
+        {
+            var systemRuntimeTypeType = typeof(Type).Assembly.GetType("System.RuntimeType");
+
+            var getMethodBase1 = systemRuntimeTypeType.GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
+                .Where(m => m.Name == "GetMethodBase")
+                .Where(m => m.GetParameters().Length == 2)
+                .FirstOrDefault(m =>
+                    m.GetParameters().First().ParameterType == systemRuntimeTypeType &&
+                    m.GetParameters().Last().ParameterType.Name == "IRuntimeMethodInfo");
+
+            var getMethodBase2 = systemRuntimeTypeType.GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
+                .FirstOrDefault(m => m.Name == "GetMethodBase" && m.GetParameters().Length == 1);
+
+            var myMethod = typeof(Program).GetMethod(nameof(Hook5), BindingFlags.Static | BindingFlags.Public);
+
+            var replacementMethod = new DynamicMethodDefinition(
+                getMethodBase2.Name,
+                getMethodBase2.ReturnType,
+                getMethodBase2.GetParameters().Select(x => x.ParameterType).ToArray()
+            )
+            {
+                OwnerType = getMethodBase1.DeclaringType
+            };
+
+            var iLGenerator = replacementMethod.GetILGenerator();
+
+            iLGenerator.DeclareLocal(typeof(MethodBase), false);
+
+            iLGenerator.Emit(System.Reflection.Emit.OpCodes.Ldnull);
+            iLGenerator.Emit(System.Reflection.Emit.OpCodes.Stloc_0);
+            iLGenerator.Emit(System.Reflection.Emit.OpCodes.Ldnull);
+            iLGenerator.Emit(System.Reflection.Emit.OpCodes.Ldarg_0);
+            iLGenerator.Emit(System.Reflection.Emit.OpCodes.Call, getMethodBase1);
+            iLGenerator.Emit(System.Reflection.Emit.OpCodes.Stloc_0);
+            iLGenerator.Emit(System.Reflection.Emit.OpCodes.Ldloca, 0);
+            iLGenerator.Emit(System.Reflection.Emit.OpCodes.Call, myMethod);
+            iLGenerator.Emit(System.Reflection.Emit.OpCodes.Ldloc_0);
+            iLGenerator.Emit(System.Reflection.Emit.OpCodes.Ret);
+
+            var replacementMethodInfo = replacementMethod.Generate();
+
+            Memory.SimpleHook(getMethodBase2, replacementMethodInfo);
         }
     }
 }
